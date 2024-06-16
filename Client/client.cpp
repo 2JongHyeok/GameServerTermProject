@@ -22,7 +22,7 @@ constexpr auto SCREEN_HEIGHT = 16;
 constexpr auto TILE_WIDTH = 65;
 constexpr auto WINDOW_WIDTH = SCREEN_WIDTH * TILE_WIDTH;   // size of window
 constexpr auto WINDOW_HEIGHT = SCREEN_WIDTH * TILE_WIDTH;
-constexpr int map_count = 13;
+constexpr int map_count = 24;
 
 int g_left_x;
 int g_top_y;
@@ -88,12 +88,14 @@ public:
 		m_name_.setStyle(sf::Text::Bold);
 	}
 };
+OBJECT avatar;
+unordered_map <int, OBJECT> players;
 class map_loader {
 public:
-	int mapnums[13] = { 2,3,4,15,16,17, 28,30, 40,41,42,43,50 };
+	int mapnums[map_count] = {1,2,3,4,8,9,10,15,16,17,21,22,23, 28,30,34,35,36,38,41,42,43,50,51 };
 
-	sf::Texture* maptexture[13];
-	OBJECT tiles[13];
+	sf::Texture* maptexture[map_count];
+	OBJECT tiles[map_count];
 
 	map_loader() {
 	}
@@ -133,7 +135,7 @@ public:
 
 
 		for (int i = 0; i < map_count; ++i) {
-			std::string TexAddr = "Resource/Map1/BG_";
+			std::string TexAddr = "images/BG_";
 			TexAddr += to_string(mapnums[i]);
 			TexAddr += ".gif";
 			maptexture[i] = new sf::Texture;
@@ -156,74 +158,116 @@ public:
 				int idx = tile_x + tile_y * W_WIDTH;
 				if (idx < 0 || idx >W_WIDTH * W_HEIGHT) continue;
 
-				switch (layer[idx]) {
-				case 87:
+				switch (my_map[j + g_top_y][i + g_left_x]) {
+				case 1:
 					tiles[0].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
 					tiles[0].a_draw();
 					break;
-				case 90:
+				case 2:
 					tiles[1].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
 					tiles[1].a_draw();
 					break;
-				case 93:
+				case 3:
 					tiles[2].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
 					tiles[2].a_draw();
 					break;
-				case 96:
+				case 4:
 					tiles[3].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
 					tiles[3].a_draw();
 					break;
-				case 99:
+				case 8:
 					tiles[4].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
 					tiles[4].a_draw();
 					break;
-				case 230:
+				case 9:
 					tiles[5].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
 					tiles[5].a_draw();
 					break;
-				case 231:
+				case 10:
 					tiles[6].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
 					tiles[6].a_draw();
 					break;
-				case 286:
+				case 15:
 					tiles[7].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
 					tiles[7].a_draw();
 					break;
-				case 301:
+				case 16:
 					tiles[8].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
 					tiles[8].a_draw();
 					break;
-				case 304:
+				case 17:
 					tiles[9].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
 					tiles[9].a_draw();
 					break;
-				case 307:
+				case 21:
 					tiles[10].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
 					tiles[10].a_draw();
 					break;
-				case 311:
+
+				case 22:
 					tiles[11].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
 					tiles[11].a_draw();
 					break;
-				case 313:
+				case 23:
 					tiles[12].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
 					tiles[12].a_draw();
 					break;
-				case 332:
+				case 28:
 					tiles[13].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
 					tiles[13].a_draw();
 					break;
+				case 30:
+					tiles[14].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[14].a_draw();
+					break;
+				case 34:
+					tiles[15].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[15].a_draw();
+					break;
+				case 35:
+					tiles[16].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[16].a_draw();
+					break;
+				case 36:
+					tiles[17].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[17].a_draw();
+					break;
+				case 38:
+					tiles[18].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[18].a_draw();
+					break;
+				case 41:
+					tiles[19].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[19].a_draw();
+					break;
+				case 42:
+					tiles[20].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[20].a_draw();
+					break;
+				case 43:
+					tiles[21].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[21].a_draw();
+					break;
+				case 50:
+					tiles[22].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[22].a_draw();
+					break;
+				case 51:
+					tiles[23].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[23].a_draw();
+					break;
+				default:
+					tiles[23].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[23].a_draw();
 				}
+				
 			}
 	}
 
 };
-OBJECT avatar;
-unordered_map <int, OBJECT> players;
 
-OBJECT white_tile;
-OBJECT black_tile;
 
+map_loader ml;
 sf::Texture* board;
 sf::Texture* pieces;
 
@@ -237,8 +281,6 @@ void client_initialize()
 		cout << "Font Loading Error!\n";
 		exit(-1);
 	}
-	white_tile = OBJECT{ *board, 5, 5, TILE_WIDTH, TILE_WIDTH };
-	black_tile = OBJECT{ *board, 69, 5, TILE_WIDTH, TILE_WIDTH };
 	avatar = OBJECT{ *pieces, 128, 0, 64, 64 };
 	avatar.move(4, 4);
 }
@@ -357,6 +399,7 @@ void process_data(char* net_buf, size_t io_byte)
 
 void client_main()
 {
+	ml.Draw();
 	char net_buf[BUF_SIZE];
 	size_t	received;
 
@@ -373,22 +416,7 @@ void client_main()
 	if (recv_result != sf::Socket::NotReady)
 		if (received > 0) process_data(net_buf, received);
 
-	for (int i = 0; i < SCREEN_WIDTH; ++i)
-		for (int j = 0; j < SCREEN_HEIGHT; ++j)
-		{
-			int tile_x = i + g_left_x;
-			int tile_y = j + g_top_y;
-			if ((tile_x < 0) || (tile_y < 0)) continue;
-			if (0 == (tile_x / 3 + tile_y / 3) % 2) {
-				white_tile.a_move(TILE_WIDTH * i, TILE_WIDTH * j);
-				white_tile.a_draw();
-			}
-			else
-			{
-				black_tile.a_move(TILE_WIDTH * i, TILE_WIDTH * j);
-				black_tile.a_draw();
-			}
-		}
+	
 	avatar.draw();
 	for (auto& pl : players) pl.second.draw();
 	sf::Text text;
@@ -407,10 +435,11 @@ void send_packet(void* packet)
 
 int main()
 {
+	ml.Load_Map_info();
 	wcout.imbue(locale("korean"));
 	sf::Socket::Status status = s_socket.connect("127.0.0.1", PORT_NUM);
 	s_socket.setBlocking(false);
-
+	
 	if (status != sf::Socket::Done) {
 		wcout << L"서버와 연결할 수 없습니다.\n";
 		exit(-1);

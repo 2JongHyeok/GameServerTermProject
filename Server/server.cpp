@@ -190,8 +190,10 @@ void process_packet(int c_id, char* packet)
 		for (auto& cl : clients) {
 			if (cl.state_ != ST_INGAME) continue;
 			cl.send_move_packet(c_id);
-
 		}
+	}
+	case CS_WARRIOR_AUTO_ATTACK: {
+
 	}
 	}
 }
