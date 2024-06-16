@@ -16,13 +16,12 @@ using namespace std;
 
 sf::TcpSocket s_socket;
 
-constexpr auto SCREEN_WIDTH = 16;
-constexpr auto SCREEN_HEIGHT = 16;
+constexpr auto SCREEN_WIDTH = 20;
+constexpr auto SCREEN_HEIGHT = 20;
 
 constexpr auto TILE_WIDTH = 65;
 constexpr auto WINDOW_WIDTH = SCREEN_WIDTH * TILE_WIDTH;   // size of window
 constexpr auto WINDOW_HEIGHT = SCREEN_WIDTH * TILE_WIDTH;
-constexpr int map_count = 24;
 
 int g_left_x;
 int g_top_y;
@@ -92,10 +91,10 @@ OBJECT avatar;
 unordered_map <int, OBJECT> players;
 class map_loader {
 public:
-	int mapnums[map_count] = {1,2,3,4,8,9,10,15,16,17,21,22,23, 28,30,34,35,36,38,41,42,43,50,51 };
+	int mapnums[MAP_COUNT] = {1,2,3,4,8,9,10,15,16,17,21,22,23, 28,30,34,35,36,38,41,42,43,50,51 };
 
-	sf::Texture* maptexture[map_count];
-	OBJECT tiles[map_count];
+	sf::Texture* maptexture[MAP_COUNT];
+	OBJECT tiles[MAP_COUNT];
 
 	map_loader() {
 	}
@@ -134,7 +133,7 @@ public:
 		}
 
 
-		for (int i = 0; i < map_count; ++i) {
+		for (int i = 0; i < MAP_COUNT; ++i) {
 			std::string TexAddr = "images/BG_";
 			TexAddr += to_string(mapnums[i]);
 			TexAddr += ".gif";
@@ -303,8 +302,8 @@ void ProcessPacket(char* ptr)
 		g_myid = packet->id;
 		avatar.m_x_ = packet->x;
 		avatar.m_y_ = packet->y;
-		g_left_x = packet->x - 4;
-		g_top_y = packet->y - 4;
+		g_left_x = packet->x - 10;
+		g_top_y = packet->y - 10;
 		avatar.show();
 	}
 	break;
@@ -316,8 +315,8 @@ void ProcessPacket(char* ptr)
 
 		if (id == g_myid) {
 			avatar.move(my_packet->x, my_packet->y);
-			g_left_x = my_packet->x - 4;
-			g_top_y = my_packet->y - 4;
+			g_left_x = my_packet->x - 10;
+			g_top_y = my_packet->y - 10;
 			avatar.show();
 		}
 		else if (id < MAX_USER) {
@@ -339,8 +338,8 @@ void ProcessPacket(char* ptr)
 		int other_id = my_packet->id;
 		if (other_id == g_myid) {
 			avatar.move(my_packet->x, my_packet->y);
-			g_left_x = my_packet->x - 4;
-			g_top_y = my_packet->y - 4;
+			g_left_x = my_packet->x - 10;
+			g_top_y = my_packet->y - 10;
 		}
 		else if (other_id < MAX_USER) {
 			players[other_id].move(my_packet->x, my_packet->y);

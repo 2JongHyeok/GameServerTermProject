@@ -6,21 +6,83 @@
 #include <vector>
 #include <mutex>
 #include <unordered_set>
+#include <fstream>
+#include <concurrent_priority_queue.h>
+#include <string>
 #include "protocol.h"
+
+#include "include/lua.hpp"
 
 #pragma comment(lib, "WS2_32.lib")
 #pragma comment(lib, "MSWSock.lib")
+#pragma comment(lib, "lua54.lib")
+
 using namespace std;
+constexpr int map_count = 24;
+char my_map[W_HEIGHT][W_WIDTH];
+constexpr int VIEW_RANGE = 5;
+enum EVENT_TYPE { EV_RANDOM_MOVE };
+struct TIMER_EVENT {
+	int obj_id;
+	chrono::system_clock::time_point wakeup_time;
+	EVENT_TYPE event_id;
+	int target_id;
+	constexpr bool operator < (const TIMER_EVENT& L) const
+	{
+		return (wakeup_time > L.wakeup_time);
+	}
+};
+concurrency::concurrent_priority_queue<TIMER_EVENT> timer_queue;
 
 constexpr int BUF_SIZE = 1024;
+class map_loader {
+public:
+	map_loader() {
+	}
 
-enum COMP_TYPE { OP_ACCEPT, OP_RECV, OP_SEND };
+	void Load_Map_info() {
+
+		std::ifstream in{ "mymap.txt" };
+		// 파일 열기 실패 여부 확인
+		if (!in) {
+			std::cerr << "파일을 열지 못했습니다: test1.txt\n";
+			if (in.fail()) {
+				std::cerr << "오류: 파일을 찾을 수 없습니다 또는 파일을 열 수 없습니다.\n";
+			}
+			else {
+				std::cerr << "알 수 없는 오류가 발생했습니다.\n";
+			}
+
+		}
+		int index_x = 0;
+		int index_y = 0;
+		char temp;
+		string sinteger = "";
+		int count = 0;
+		while (in >> temp) {
+			if (temp == ',') {
+				int integer = stoi(sinteger);
+				my_map[index_y][index_x++] = integer;
+				sinteger = "";
+				if (index_x == 2000) {
+					index_y++;
+					index_x = 0;
+				}
+				continue;
+			}
+			sinteger += temp;
+		}
+	}
+};
+
+enum COMP_TYPE { OP_ACCEPT, OP_RECV, OP_SEND, OP_NPC_MOVE, OP_AI_HELLO};
 class OVER_EXP {
 public:
 	WSAOVERLAPPED over_;
 	WSABUF wsabuf_;
 	char send_buf_[BUF_SIZE];
 	COMP_TYPE comp_type_;
+	int ai_target_obj_;
 	OVER_EXP()
 	{
 		wsabuf_.len = BUF_SIZE;
@@ -45,10 +107,13 @@ class SESSION {
 public:
 	mutex s_lock_;
 	S_STATE state_;
+	atomic_bool	is_active_;		
 	int id_;
 	SOCKET socket_;
 	short	x_, y_;
 	char	name_[NAME_SIZE];
+	unordered_set <int> view_list_;
+	mutex	vl_;
 	int		prev_remain_;
 	unsigned int		last_move_time_;
 	int		visual_;
@@ -56,6 +121,7 @@ public:
 	int		max_hp_;
 	int		exp_;
 	int		level_;
+	mutex	ll_;
 public:
 	SESSION()
 	{
@@ -103,16 +169,39 @@ public:
 	void send_add_object_packet(int c_id);
 	void send_remove_player_packet(int c_id)
 	{
+		vl_.lock();
+		if (view_list_.count(c_id))
+			view_list_.erase(c_id);
+		else {
+			vl_.unlock();
+			return;
+		}
+		vl_.unlock();
 		SC_REMOVE_OBJECT_PACKET p;
 		p.size = sizeof(p);
 		p.type = SC_REMOVE_OBJECT;
 		p.id = c_id;
 		do_send(&p);
 	}
+	void send_chat_packet(int p_id, const char* mess);
 };
+bool is_pc(int object_id)
+{
+	return object_id < MAX_USER;
+}
 
-array<SESSION, MAX_USER> clients;
+bool is_npc(int object_id)
+{
+	return !is_pc(object_id);
+}
 
+bool can_see(int from, int to)
+{
+	if (abs(clients[from].x_ - clients[to].x_) > VIEW_RANGE) return false;
+	return abs(clients[from].y_ - clients[to].y_) <= VIEW_RANGE;
+}
+array<SESSION, MAX_USER+MAX_NPC> clients;
+HANDLE h_iocp;
 SOCKET g_s_socket, g_c_socket;
 OVER_EXP g_a_over;
 
@@ -138,7 +227,20 @@ void SESSION::send_add_object_packet(int c_id)
 	strcpy_s(add_packet.name, clients[c_id].name_);
 	add_packet.x = clients[c_id].x_;
 	add_packet.y = clients[c_id].y_;
+	vl_.lock();
+	view_list_.insert(c_id);
+	vl_.unlock();
 	do_send(&add_packet);
+}
+
+void SESSION::send_chat_packet(int p_id, const char* mess)
+{
+	SC_CHAT_PACKET packet;
+	packet.id = p_id;
+	packet.size = sizeof(packet);
+	packet.type = SC_CHAT;
+	strcpy_s(packet.mess, mess);
+	do_send(&packet);
 }
 
 int get_new_client_id()
@@ -151,24 +253,44 @@ int get_new_client_id()
 	return -1;
 }
 
+void WakeUpNPC(int npc_id, int waker)
+{
+	OVER_EXP* exover = new OVER_EXP;
+	exover->comp_type_ = OP_AI_HELLO;
+	exover->ai_target_obj_ = waker;
+	PostQueuedCompletionStatus(h_iocp, 1, npc_id, &exover->over_);
+
+	if (clients[npc_id].is_active_) return;
+	bool old_state = false;
+	if (false == atomic_compare_exchange_strong(&clients[npc_id].is_active_, &old_state, true))
+		return;
+	TIMER_EVENT ev{ npc_id, chrono::system_clock::now(), EV_RANDOM_MOVE, 0 };
+	timer_queue.push(ev);
+}
+
 void process_packet(int c_id, char* packet)
 {
 	switch (packet[2]) {
 	case CS_LOGIN: {
 		CS_LOGIN_PACKET* p = reinterpret_cast<CS_LOGIN_PACKET*>(packet);
 		strcpy_s(clients[c_id].name_, p->name);
-		clients[c_id].send_login_info_packet();
 		{
-			lock_guard<mutex> ll{ clients[c_id].s_lock_ };
+			lock_guard<mutex> ll{ clients[c_id].s_lock_};
+			clients[c_id].x_ = rand() % W_WIDTH;
+			clients[c_id].y_ = rand() % W_HEIGHT;
 			clients[c_id].state_ = ST_INGAME;
 		}
+		clients[c_id].send_login_info_packet();
 		for (auto& pl : clients) {
 			{
 				lock_guard<mutex> ll(pl.s_lock_);
 				if (ST_INGAME != pl.state_) continue;
 			}
 			if (pl.id_ == c_id) continue;
-			pl.send_add_object_packet(c_id);
+			if (false == can_see(c_id, pl.id_))
+				continue;
+			if (is_pc(pl.id_)) pl.send_add_object_packet(c_id);
+			else WakeUpNPC(pl.id_, c_id);
 			clients[c_id].send_add_object_packet(pl.id_);
 		}
 		break;
@@ -187,14 +309,135 @@ void process_packet(int c_id, char* packet)
 		clients[c_id].x_ = x;
 		clients[c_id].y_ = y;
 
+		unordered_set<int> near_list;
+		clients[c_id].vl_.lock();
+		unordered_set<int> old_vlist = clients[c_id].view_list_;
+		clients[c_id].vl_.unlock();
+
 		for (auto& cl : clients) {
 			if (cl.state_ != ST_INGAME) continue;
-			cl.send_move_packet(c_id);
+			if (cl.id_ == c_id) continue;
+			if (can_see(c_id, cl.id_))
+				near_list.insert(cl.id_);
 		}
+
+		clients[c_id].send_move_packet(c_id);
+
+		for (auto& pl : near_list) {
+			auto& cpl = clients[pl];
+			if (is_pc(pl)) {
+				cpl.vl_.lock();
+				if (clients[pl].view_list_.count(c_id)) {
+					cpl.vl_.unlock();
+					clients[pl].send_move_packet(c_id);
+				}
+				else {
+					cpl.vl_.unlock();
+					clients[pl].send_add_object_packet(c_id);
+				}
+			}
+			else WakeUpNPC(pl, c_id);
+
+			if (old_vlist.count(pl) == 0)
+				clients[c_id].send_add_object_packet(pl);
+		}
+
+		for (auto& pl : old_vlist) {
+			if (0 == near_list.count(pl)) {
+				clients[c_id].send_remove_player_packet(pl);
+				if (is_pc(pl))
+					clients[pl].send_remove_player_packet(c_id);
+			}
+		}
+		break;
 	}
 	case CS_WARRIOR_AUTO_ATTACK: {
 
 	}
+	}
+}
+
+int API_get_x(lua_State* L)
+{
+	int user_id =
+		(int)lua_tointeger(L, -1);
+	lua_pop(L, 2);
+	int x = clients[user_id].x;
+	lua_pushnumber(L, x);
+	return 1;
+}
+
+int API_get_y(lua_State* L)
+{
+	int user_id =
+		(int)lua_tointeger(L, -1);
+	lua_pop(L, 2);
+	int y = clients[user_id].y;
+	lua_pushnumber(L, y);
+	return 1;
+}
+
+int API_SendMessage(lua_State* L)
+{
+	int my_id = (int)lua_tointeger(L, -3);
+	int user_id = (int)lua_tointeger(L, -2);
+	char* mess = (char*)lua_tostring(L, -1);
+
+	lua_pop(L, 4);
+
+	clients[user_id].send_chat_packet(my_id, mess);
+	return 0;
+}
+
+void InitializeNPC()
+{
+	cout << "NPC intialize begin.\n";
+	for (int i = MAX_USER; i < MAX_USER + MAX_NPC; ++i) {
+		clients[i].x = rand() % W_WIDTH;
+		clients[i].y = rand() % W_HEIGHT;
+		clients[i]._id = i;
+		sprintf_s(clients[i]._name, "NPC%d", i);
+		clients[i]._state = ST_INGAME;
+
+		auto L = clients[i]._L = luaL_newstate();
+		luaL_openlibs(L);
+		luaL_loadfile(L, "npc.lua");
+		lua_pcall(L, 0, 0, 0);
+
+		lua_getglobal(L, "set_uid");
+		lua_pushnumber(L, i);
+		lua_pcall(L, 1, 0, 0);
+		// lua_pop(L, 1);// eliminate set_uid from stack after call
+
+		lua_register(L, "API_SendMessage", API_SendMessage);
+		lua_register(L, "API_get_x", API_get_x);
+		lua_register(L, "API_get_y", API_get_y);
+	}
+	cout << "NPC initialize end.\n";
+}
+
+void do_timer()
+{
+	while (true) {
+		TIMER_EVENT ev;
+		auto current_time = chrono::system_clock::now();
+		if (true == timer_queue.try_pop(ev)) {
+			if (ev.wakeup_time > current_time) {
+				timer_queue.push(ev);		// 최적화 필요
+				// timer_queue에 다시 넣지 않고 처리해야 한다.
+				this_thread::sleep_for(1ms);  // 실행시간이 아직 안되었으므로 잠시 대기
+				continue;
+			}
+			switch (ev.event_id) {
+			case EV_RANDOM_MOVE:
+				OVER_EXP* ov = new OVER_EXP;
+				ov->_comp_type = OP_NPC_MOVE;
+				PostQueuedCompletionStatus(h_iocp, 1, ev.obj_id, &ov->_over);
+				break;
+			}
+			continue;		// 즉시 다음 작업 꺼내기
+		}
+		this_thread::sleep_for(1ms);   // timer_queue가 비어 있으니 잠시 기다렸다가 다시 시작
 	}
 }
 
@@ -293,8 +536,10 @@ void worker_thread(HANDLE h_iocp)
 
 int main()
 {
-	HANDLE h_iocp;
-
+	printf("맵 정보 준비중\n");
+	map_loader ml;
+	ml.Load_Map_info();
+	printf("맵 정보 준비완료\n");
 	WSADATA WSAData;
 	WSAStartup(MAKEWORD(2, 2), &WSAData);
 	g_s_socket = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
@@ -311,6 +556,7 @@ int main()
 	CreateIoCompletionPort(reinterpret_cast<HANDLE>(g_s_socket), h_iocp, 9999, 0);
 	g_c_socket = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 	g_a_over.comp_type_ = OP_ACCEPT;
+	printf("서버 시작\n");
 	AcceptEx(g_s_socket, g_c_socket, g_a_over.send_buf_, 0, addr_size + 16, addr_size + 16, 0, &g_a_over.over_);
 
 	vector <thread> worker_threads;
