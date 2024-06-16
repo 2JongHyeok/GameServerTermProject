@@ -3,6 +3,7 @@
 #include <iostream>
 #include <unordered_map>
 #include <Windows.h>
+#include <fstream>
 using namespace std;
 
 //#pragma comment (lib, "opengl32.lib")
@@ -21,6 +22,7 @@ constexpr auto SCREEN_HEIGHT = 16;
 constexpr auto TILE_WIDTH = 65;
 constexpr auto WINDOW_WIDTH = SCREEN_WIDTH * TILE_WIDTH;   // size of window
 constexpr auto WINDOW_HEIGHT = SCREEN_WIDTH * TILE_WIDTH;
+constexpr int map_count = 13;
 
 int g_left_x;
 int g_top_y;
@@ -28,6 +30,8 @@ int g_myid;
 
 sf::RenderWindow* g_window;
 sf::Font g_font;
+
+char my_map[W_HEIGHT][W_WIDTH];
 
 class OBJECT {
 private:
@@ -84,7 +88,136 @@ public:
 		m_name_.setStyle(sf::Text::Bold);
 	}
 };
+class map_loader {
+public:
+	int mapnums[13] = { 2,3,4,15,16,17, 28,30, 40,41,42,43,50 };
 
+	sf::Texture* maptexture[13];
+	OBJECT tiles[13];
+
+	map_loader() {
+	}
+
+	void Load_Map_info() {
+
+		std::ifstream in{ "mymap.txt" };
+		// 파일 열기 실패 여부 확인
+		if (!in) {
+			std::cerr << "파일을 열지 못했습니다: test1.txt\n";
+			if (in.fail()) {
+				std::cerr << "오류: 파일을 찾을 수 없습니다 또는 파일을 열 수 없습니다.\n";
+			}
+			else {
+				std::cerr << "알 수 없는 오류가 발생했습니다.\n";
+			}
+
+		}
+		int index_x=0;
+		int index_y=0;
+		char temp;
+		string sinteger = "";
+		int count = 0;
+		while (in >> temp) {
+			if (temp == ',') {
+				int integer = stoi(sinteger);
+				my_map[index_y][index_x++] = integer;
+				sinteger = "";
+				if (index_x == 2000) {
+					index_y++;
+					index_x = 0;
+				}
+				continue;
+			}
+			sinteger += temp;
+		}
+
+
+		for (int i = 0; i < map_count; ++i) {
+			std::string TexAddr = "Resource/Map1/BG_";
+			TexAddr += to_string(mapnums[i]);
+			TexAddr += ".gif";
+			maptexture[i] = new sf::Texture;
+			maptexture[i]->loadFromFile(TexAddr);
+			tiles[i] = OBJECT{ *maptexture[i], 5, 5, TILE_WIDTH, TILE_WIDTH };
+		}
+
+	}
+
+	void Draw() {
+		for (int i = 0; i < SCREEN_WIDTH; ++i)
+			for (int j = 0; j < SCREEN_HEIGHT; ++j)
+			{
+				int tile_x = i + g_left_x;
+				int tile_y = j + g_top_y;
+
+				if ((tile_x < 0) || (tile_y < 0)) continue;
+				if ((tile_x > W_WIDTH) || (tile_y > W_HEIGHT)) continue;
+
+				int idx = tile_x + tile_y * W_WIDTH;
+				if (idx < 0 || idx >W_WIDTH * W_HEIGHT) continue;
+
+				switch (layer[idx]) {
+				case 87:
+					tiles[0].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[0].a_draw();
+					break;
+				case 90:
+					tiles[1].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[1].a_draw();
+					break;
+				case 93:
+					tiles[2].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[2].a_draw();
+					break;
+				case 96:
+					tiles[3].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[3].a_draw();
+					break;
+				case 99:
+					tiles[4].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[4].a_draw();
+					break;
+				case 230:
+					tiles[5].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[5].a_draw();
+					break;
+				case 231:
+					tiles[6].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[6].a_draw();
+					break;
+				case 286:
+					tiles[7].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[7].a_draw();
+					break;
+				case 301:
+					tiles[8].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[8].a_draw();
+					break;
+				case 304:
+					tiles[9].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[9].a_draw();
+					break;
+				case 307:
+					tiles[10].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[10].a_draw();
+					break;
+				case 311:
+					tiles[11].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[11].a_draw();
+					break;
+				case 313:
+					tiles[12].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[12].a_draw();
+					break;
+				case 332:
+					tiles[13].a_move(TILE_WIDTH * i, TILE_WIDTH * j);
+					tiles[13].a_draw();
+					break;
+				}
+			}
+	}
+
+};
 OBJECT avatar;
 unordered_map <int, OBJECT> players;
 
