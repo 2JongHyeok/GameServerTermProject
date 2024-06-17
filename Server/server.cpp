@@ -20,7 +20,7 @@
 using namespace std;
 constexpr int map_count = 24;
 char my_map[W_HEIGHT][W_WIDTH];
-constexpr int VIEW_RANGE = 5;
+constexpr int VIEW_RANGE = 7;
 enum EVENT_TYPE { EV_RANDOM_MOVE };
 struct TIMER_EVENT {
 	int obj_id;
@@ -305,10 +305,30 @@ void process_packet(int c_id, char* packet)
 		short x = clients[c_id].x_;
 		short y = clients[c_id].y_;
 		switch (p->direction) {
-		case 0: if (y > 0) y--; break;
-		case 1: if (y < W_HEIGHT - 1) y++; break;
-		case 2: if (x > 0) x--; break;
-		case 3: if (x < W_WIDTH - 1) x++; break;
+		case 0: {
+			if (y <= 0) break;
+			if (my_map[y - 1][x] != 50) break;
+			y--;
+			break; 
+		}
+		case 1: { 
+			if (y >= W_HEIGHT - 1) break;
+			if (my_map[y + 1][x] != 50) break;
+			y++;
+			break;
+		}
+		case 2: {
+			if (x <= 0) break;
+			if (my_map[y  ][x-1] != 50) break;
+			x--;
+			break;
+		}
+		case 3: {
+			if (x >= W_WIDTH - 1) break; 
+			if (my_map[y][x+1] != 50) break;
+			x++;
+			break; 
+		}
 		}
 		clients[c_id].x_ = x;
 		clients[c_id].y_ = y;
@@ -395,7 +415,6 @@ int API_SendMessage(lua_State* L)
 
 void InitializeNPC()
 {
-	cout << "NPC intialize begin.\n";
 	for (int i = MAX_USER; i < MAX_USER + MAX_NPC; ++i) {
 		clients[i].x_ = rand() % W_WIDTH;
 		clients[i].y_ = rand() % W_HEIGHT;
@@ -417,7 +436,6 @@ void InitializeNPC()
 		lua_register(L, "API_get_x", API_get_x);
 		lua_register(L, "API_get_y", API_get_y);
 	}
-	cout << "NPC initialize end.\n";
 }
 
 void do_timer()
@@ -447,7 +465,12 @@ void do_timer()
 
 void disconnect(int c_id)
 {
-	for (auto& pl : clients) {
+	clients[c_id].vl_.lock();
+	unordered_set <int> vl = clients[c_id].view_list_;
+	clients[c_id].vl_.unlock();
+	for (auto& p_id :vl) {
+		if (is_npc(p_id)) continue;
+		auto& pl = clients[p_id];
 		{
 			lock_guard<mutex> ll(pl.s_lock_);
 			if (ST_INGAME != pl.state_) continue;
@@ -459,6 +482,81 @@ void disconnect(int c_id)
 
 	lock_guard<mutex> ll(clients[c_id].s_lock_);
 	clients[c_id].state_ = ST_FREE;
+}
+void do_npc_random_move(int npc_id)
+{
+	std::cout << "랜덤하게 움질일게잇" << std::endl;
+	SESSION& npc = clients[npc_id];
+	unordered_set<int> old_vl;
+	for (auto& obj : clients) {
+		if (ST_INGAME != obj.state_) continue;
+		if (true == is_npc(obj.id_)) continue;
+		if (true == can_see(npc.id_, obj.id_))
+			old_vl.insert(obj.id_);
+	}
+
+	int x = npc.x_;
+	int y = npc.y_;
+	switch (rand() % 4) {
+	case 0: {
+		if (y <= 0) break;
+		if (my_map[y - 1][x] != 50) break;
+		y--;
+		break;
+	}
+	case 1: {
+		if (y >= W_HEIGHT - 1) break;
+		if (my_map[y + 1][x] != 50) break;
+		y++;
+		break;
+	}
+	case 2: {
+		if (x <= 0) break;
+		if (my_map[y][x - 1] != 50) break;
+		x--;
+		break;
+	}
+	case 3: {
+		if (x >= W_WIDTH - 1) break;
+		if (my_map[y][x + 1] != 50) break;
+		x++;
+		break;
+	}
+	}
+	npc.x_ = x;
+	npc.y_ = y;
+
+	unordered_set<int> new_vl;
+	for (auto& obj : clients) {
+		if (ST_INGAME != obj.state_) continue;
+		if (true == is_npc(obj.id_)) continue;
+		if (true == can_see(npc.id_, obj.id_))
+			new_vl.insert(obj.id_);
+	}
+
+	for (auto pl : new_vl) {
+		if (0 == old_vl.count(pl)) {
+			// 플레이어의 시야에 등장
+			clients[pl].send_add_object_packet(npc.id_);
+		}
+		else {
+			// 플레이어가 계속 보고 있음.
+			clients[pl].send_move_packet(npc.id_);
+		}
+	}
+	///vvcxxccxvvdsvdvds
+	for (auto pl : old_vl) {
+		if (0 == new_vl.count(pl)) {
+			clients[pl].vl_.lock();
+			if (0 != clients[pl].view_list_.count(npc.id_)) {
+				clients[pl].vl_.unlock();
+				clients[pl].send_remove_player_packet(npc.id_);
+			}
+			else {
+				clients[pl].vl_.unlock();
+			}
+		}
+	}
 }
 
 void worker_thread(HANDLE h_iocp)
@@ -534,6 +632,27 @@ void worker_thread(HANDLE h_iocp)
 		case OP_SEND:
 			delete ex_over;
 			break;
+
+		case OP_NPC_MOVE: {
+			bool keep_alive = false;
+			for (int j = 0; j < MAX_USER; ++j) {
+				if (clients[j].state_ != ST_INGAME) continue;
+				if (can_see(static_cast<int>(key), j)) {
+					keep_alive = true;
+					break;
+				}
+			}
+			if (true == keep_alive) {
+				do_npc_random_move(static_cast<int>(key));
+				TIMER_EVENT ev{ key, chrono::system_clock::now() + 1s, EV_RANDOM_MOVE, 0 };
+				timer_queue.push(ev);
+			}
+			else {
+				clients[key].is_active_ = false;
+			}
+			delete ex_over;
+			break;
+		}
 		}
 	}
 }
@@ -572,6 +691,8 @@ int main()
 	int num_threads = std::thread::hardware_concurrency();
 	for (int i = 0; i < num_threads; ++i)
 		worker_threads.emplace_back(worker_thread, h_iocp);
+	thread timer_thread{ do_timer };
+	timer_thread.join();
 	for (auto& th : worker_threads)
 		th.join();
 	closesocket(g_s_socket);

@@ -326,9 +326,10 @@ void ProcessPacket(char* ptr)
 			players[id].show();
 		}
 		else {
-			//npc[id - NPC_START].x = my_packet->x;
-			//npc[id - NPC_START].y = my_packet->y;
-			//npc[id - NPC_START].attr |= BOB_ATTR_VISIBLE;
+			players[id] = OBJECT{ *pieces, 0, 0, 64, 64 };
+			players[id].move(my_packet->x, my_packet->y);
+			players[id].set_name(my_packet->name);
+			players[id].show();
 		}
 		break;
 	}
@@ -345,8 +346,7 @@ void ProcessPacket(char* ptr)
 			players[other_id].move(my_packet->x, my_packet->y);
 		}
 		else {
-			//npc[other_id - NPC_START].x = my_packet->x;
-			//npc[other_id - NPC_START].y = my_packet->y;
+			players[other_id].move(my_packet->x, my_packet->y);
 		}
 		break;
 	}
@@ -362,7 +362,7 @@ void ProcessPacket(char* ptr)
 			players.erase(other_id);
 		}
 		else {
-			//		npc[other_id - NPC_START].attr &= ~BOB_ATTR_VISIBLE;
+			players[other_id].hide();
 		}
 		break;
 	}
