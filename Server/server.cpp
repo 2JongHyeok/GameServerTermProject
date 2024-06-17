@@ -253,7 +253,7 @@ void SESSION::send_add_object_packet(int c_id)
 	add_packet.size = sizeof(SC_ADD_OBJECT_PACKET);
 	add_packet.type = SC_ADD_OBJECT;
 	add_packet.id = c_id;
-	add_packet.visual = visual_;
+	add_packet.visual = clients[c_id].visual_;
 	strcpy_s(add_packet.name, clients[c_id].name_);
 	add_packet.x = clients[c_id].x_;
 	add_packet.y = clients[c_id].y_;

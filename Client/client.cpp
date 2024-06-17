@@ -343,6 +343,7 @@ void ProcessPacket(char* ptr)
 		}
 		else if (id < MAX_USER) {
 			players[id] = OBJECT{ *pieces, 0, 0, 64, 64 };
+			players[id].change_texture(my_packet->visual);
 			players[id].move(my_packet->x, my_packet->y);
 			players[id].set_name(my_packet->name);
 			players[id].show();
@@ -456,6 +457,9 @@ void send_packet(void* packet)
 
 int main()
 {
+	string player_name;
+	cout << "Enter player_name : ";
+	cin >> player_name;
 	ml.Load_Map_info();
 	wcout.imbue(locale("korean"));
 	sf::Socket::Status status = s_socket.connect("127.0.0.1", PORT_NUM);
@@ -471,9 +475,7 @@ int main()
 	p.size = sizeof(p);
 	p.type = CS_LOGIN;
 
-	string player_name;
-	cout << "Enter player_name : " << endl;
-	cin >> player_name;
+	
 	strcpy_s(p.name, player_name.c_str());
 	send_packet(&p);
 	avatar.set_name(p.name);
