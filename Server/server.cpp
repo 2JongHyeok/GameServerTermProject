@@ -8,6 +8,7 @@
 #include <unordered_set>
 #include <fstream>
 #include <concurrent_priority_queue.h>
+#include <tbb/concurrent_hash_map.h>
 #include <string>
 #include "protocol.h"
 
@@ -20,7 +21,15 @@
 using namespace std;
 constexpr int map_count = 24;
 char my_map[W_HEIGHT][W_WIDTH];
+
 constexpr int VIEW_RANGE = 7;
+
+constexpr int STAT_ATK = 10;
+constexpr int STAT_ARMOR = 10;
+
+constexpr int SECTOR_SIZE = 20;
+tbb::concurrent_hash_map<int, int > Sector;
+
 enum EVENT_TYPE { EV_RANDOM_MOVE };
 struct TIMER_EVENT {
 	int obj_id;
@@ -123,6 +132,8 @@ public:
 	int		level_;
 	mutex	ll_;
 	lua_State* L_;
+	int		prev_sector_;
+	int		now_sector_;
 
 public:
 	SESSION()
@@ -285,17 +296,21 @@ void process_packet(int c_id, char* packet)
 			clients[c_id].state_ = ST_INGAME;
 		}
 		clients[c_id].send_login_info_packet();
-		for (auto& pl : clients) {
+		clients[c_id].prev_sector_ = clients[c_id].x_ / SECTOR_SIZE + clients[c_id].y_ / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
+		clients[c_id].now_sector_ = clients[c_id].prev_sector_;
+		int my_sector = clients[c_id].now_sector_;
+		for (auto& pl : Sector) {
+			if (pl.second != my_sector) continue;
 			{
-				lock_guard<mutex> ll(pl.s_lock_);
-				if (ST_INGAME != pl.state_) continue;
+				lock_guard<mutex> ll(clients[pl.first].s_lock_);
+				if (ST_INGAME != clients[pl.first].state_) continue;
 			}
-			if (pl.id_ == c_id) continue;
-			if (false == can_see(c_id, pl.id_))
+			if (clients[pl.first].id_ == c_id) continue;
+			if (false == can_see(c_id, clients[pl.first].id_))
 				continue;
-			if (is_pc(pl.id_)) pl.send_add_object_packet(c_id);
-			else WakeUpNPC(pl.id_, c_id);
-			clients[c_id].send_add_object_packet(pl.id_);
+			if (is_pc(clients[pl.first].id_)) clients[pl.first].send_add_object_packet(c_id);
+			else WakeUpNPC(clients[pl.first].id_, c_id);
+			clients[c_id].send_add_object_packet(clients[pl.first].id_);
 		}
 		break;
 	}
@@ -304,6 +319,12 @@ void process_packet(int c_id, char* packet)
 		clients[c_id].last_move_time_ = p->move_time;
 		short x = clients[c_id].x_;
 		short y = clients[c_id].y_;
+		clients[c_id].prev_sector_ = clients[c_id].now_sector_;
+		clients[c_id].now_sector_ = x / SECTOR_SIZE + y / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
+		if (clients[c_id].prev_sector_ != clients[c_id].now_sector_) {
+			Sector.emplace(c_id, clients[c_id].now_sector_);
+		}
+		int my_sector = clients[c_id].now_sector_;
 		switch (p->direction) {
 		case 0: {
 			if (y <= 0) break;
@@ -338,11 +359,12 @@ void process_packet(int c_id, char* packet)
 		unordered_set<int> old_vlist = clients[c_id].view_list_;
 		clients[c_id].vl_.unlock();
 
-		for (auto& cl : clients) {
-			if (cl.state_ != ST_INGAME) continue;
-			if (cl.id_ == c_id) continue;
-			if (can_see(c_id, cl.id_))
-				near_list.insert(cl.id_);
+		for (auto& cl : Sector) {
+			if(cl.second != my_sector) continue;
+			if (clients[cl.first].state_ != ST_INGAME) continue;
+			if (clients[cl.first].id_ == c_id) continue;
+			if (can_see(c_id, clients[cl.first].id_))
+				near_list.insert(clients[cl.first].id_);
 		}
 
 		clients[c_id].send_move_packet(c_id);
@@ -418,6 +440,9 @@ void InitializeNPC()
 	for (int i = MAX_USER; i < MAX_USER + MAX_NPC; ++i) {
 		clients[i].x_ = rand() % W_WIDTH;
 		clients[i].y_ = rand() % W_HEIGHT;
+		clients[i].prev_sector_ = clients[i].x_ / SECTOR_SIZE + clients[i].y_ / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
+		clients[i].now_sector_ = clients[i].prev_sector_;
+		Sector.insert({ i, clients[i].now_sector_ });
 		clients[i].id_ = i;
 		sprintf_s(clients[i].name_, "NPC%d", i);
 		clients[i].state_ = ST_INGAME;
@@ -525,13 +550,19 @@ void do_npc_random_move(int npc_id)
 	}
 	npc.x_ = x;
 	npc.y_ = y;
-
+	clients[npc_id].prev_sector_ = clients[npc_id].now_sector_;
+	clients[npc_id].now_sector_ = x / SECTOR_SIZE + y / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
+	if (clients[npc_id].prev_sector_ != clients[npc_id].now_sector_) {
+		Sector.emplace(npc_id, clients[npc_id].now_sector_);
+	}
+	int my_sector = clients[npc_id].now_sector_;
 	unordered_set<int> new_vl;
-	for (auto& obj : clients) {
-		if (ST_INGAME != obj.state_) continue;
-		if (true == is_npc(obj.id_)) continue;
-		if (true == can_see(npc.id_, obj.id_))
-			new_vl.insert(obj.id_);
+	for (auto& obj : Sector) {
+		if (obj.second != my_sector) continue;
+		if (ST_INGAME != clients[obj.first].state_) continue;
+		if (true == is_npc(clients[obj.first].id_)) continue;
+		if (true == can_see(npc.id_, clients[obj.first].id_))
+			new_vl.insert(clients[obj.first].id_);
 	}
 
 	for (auto pl : new_vl) {
