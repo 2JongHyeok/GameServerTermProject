@@ -6,9 +6,9 @@
 #include <vector>
 #include <mutex>
 #include <unordered_set>
+#include <concurrent_unordered_map.h>
 #include <fstream>
 #include <concurrent_priority_queue.h>
-#include <tbb/concurrent_hash_map.h>
 #include <string>
 #include "protocol.h"
 
@@ -28,7 +28,7 @@ constexpr int STAT_ATK = 10;
 constexpr int STAT_ARMOR = 10;
 
 constexpr int SECTOR_SIZE = 20;
-tbb::concurrent_hash_map<int, int > Sector;
+concurrency::concurrent_unordered_map<int, int > Sector;
 
 enum EVENT_TYPE { EV_RANDOM_MOVE };
 struct TIMER_EVENT {
@@ -134,6 +134,7 @@ public:
 	lua_State* L_;
 	int		prev_sector_;
 	int		now_sector_;
+	bool	in_use_;
 
 public:
 	SESSION()
@@ -144,6 +145,7 @@ public:
 		name_[0] = 0;
 		state_ = ST_FREE;
 		prev_remain_ = 0;
+		in_use_ = true;
 	}
 
 	~SESSION() {}
@@ -202,6 +204,19 @@ array<SESSION, MAX_USER+MAX_NPC> clients;
 HANDLE h_iocp;
 SOCKET g_s_socket, g_c_socket;
 OVER_EXP g_a_over;
+
+bool in_near_sector(int my_sector,int targer_sector) {
+	if (my_sector +99 == targer_sector)return true;
+	if (my_sector +100 == targer_sector)return true;
+	if (my_sector +101 == targer_sector)return true;
+	if (my_sector - 1 == targer_sector)return true;
+	if (my_sector == targer_sector) return true;
+	if (my_sector + 1 == targer_sector)return true;
+	if (my_sector -101 == targer_sector)return true;
+	if (my_sector -100 == targer_sector)return true;
+	if (my_sector - 99 == targer_sector)return true;
+	return false;
+}
 
 bool is_pc(int object_id)
 {
@@ -299,8 +314,10 @@ void process_packet(int c_id, char* packet)
 		clients[c_id].prev_sector_ = clients[c_id].x_ / SECTOR_SIZE + clients[c_id].y_ / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
 		clients[c_id].now_sector_ = clients[c_id].prev_sector_;
 		int my_sector = clients[c_id].now_sector_;
+		Sector.insert({ c_id, my_sector });
 		for (auto& pl : Sector) {
-			if (pl.second != my_sector) continue;
+			if (!in_near_sector(my_sector, pl.second)) continue;
+			if (clients[pl.first].in_use_ == false) continue;
 			{
 				lock_guard<mutex> ll(clients[pl.first].s_lock_);
 				if (ST_INGAME != clients[pl.first].state_) continue;
@@ -322,7 +339,7 @@ void process_packet(int c_id, char* packet)
 		clients[c_id].prev_sector_ = clients[c_id].now_sector_;
 		clients[c_id].now_sector_ = x / SECTOR_SIZE + y / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
 		if (clients[c_id].prev_sector_ != clients[c_id].now_sector_) {
-			Sector.emplace(c_id, clients[c_id].now_sector_);
+			Sector[c_id] =  clients[c_id].now_sector_;
 		}
 		int my_sector = clients[c_id].now_sector_;
 		switch (p->direction) {
@@ -360,7 +377,8 @@ void process_packet(int c_id, char* packet)
 		clients[c_id].vl_.unlock();
 
 		for (auto& cl : Sector) {
-			if(cl.second != my_sector) continue;
+			if (!in_near_sector(my_sector,cl.second)) continue;
+			if (clients[cl.first].in_use_ == false) continue;
 			if (clients[cl.first].state_ != ST_INGAME) continue;
 			if (clients[cl.first].id_ == c_id) continue;
 			if (can_see(c_id, clients[cl.first].id_))
@@ -490,6 +508,7 @@ void do_timer()
 
 void disconnect(int c_id)
 {
+	clients[c_id].in_use_ = false;
 	clients[c_id].vl_.lock();
 	unordered_set <int> vl = clients[c_id].view_list_;
 	clients[c_id].vl_.unlock();
@@ -510,14 +529,16 @@ void disconnect(int c_id)
 }
 void do_npc_random_move(int npc_id)
 {
-	std::cout << "·£´ýÇÏ°Ô ¿òÁúÀÏ°ÔÀÕ" << std::endl;
 	SESSION& npc = clients[npc_id];
+	int my_sector = Sector[npc_id];
 	unordered_set<int> old_vl;
-	for (auto& obj : clients) {
-		if (ST_INGAME != obj.state_) continue;
-		if (true == is_npc(obj.id_)) continue;
-		if (true == can_see(npc.id_, obj.id_))
-			old_vl.insert(obj.id_);
+	for (auto& obj : Sector) {
+		if (clients[obj.first].in_use_ == false) continue;
+		if (!in_near_sector(my_sector,obj.second)) continue;
+		if (ST_INGAME != clients[obj.first].state_) continue;
+		if (true == is_npc(clients[obj.first].id_)) continue;
+		if (true == can_see(npc.id_, clients[obj.first].id_))
+			old_vl.insert(clients[obj.first].id_);
 	}
 
 	int x = npc.x_;
@@ -553,12 +574,13 @@ void do_npc_random_move(int npc_id)
 	clients[npc_id].prev_sector_ = clients[npc_id].now_sector_;
 	clients[npc_id].now_sector_ = x / SECTOR_SIZE + y / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
 	if (clients[npc_id].prev_sector_ != clients[npc_id].now_sector_) {
-		Sector.emplace(npc_id, clients[npc_id].now_sector_);
+		Sector[npc_id] =  clients[npc_id].now_sector_;
 	}
-	int my_sector = clients[npc_id].now_sector_;
+	my_sector = clients[npc_id].now_sector_;
 	unordered_set<int> new_vl;
 	for (auto& obj : Sector) {
-		if (obj.second != my_sector) continue;
+		if (clients[obj.first].in_use_ == false) continue;
+		if (!in_near_sector(my_sector,obj.second)) continue;
 		if (ST_INGAME != clients[obj.first].state_) continue;
 		if (true == is_npc(clients[obj.first].id_)) continue;
 		if (true == can_see(npc.id_, clients[obj.first].id_))
