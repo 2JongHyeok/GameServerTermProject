@@ -4,7 +4,7 @@ constexpr int NAME_SIZE = 20;
 constexpr int CHAT_SIZE = 300;
 
 constexpr int MAX_USER = 10000;
-constexpr int MAX_NPC = 200000;
+constexpr int MAX_NPC = 20000;
 
 constexpr int W_WIDTH = 2000;
 constexpr int W_HEIGHT = 2000;
@@ -18,9 +18,6 @@ constexpr char CS_CHAT = 2;
 constexpr char CS_ATTACK = 3;			// 4 방향 공격
 constexpr char CS_TELEPORT = 4;			// RANDOM한 위치로 Teleport, Stress Test할 때 Hot Spot현상을 피하기 위해 구현
 constexpr char CS_LOGOUT = 5;			// 클라이언트에서 정상적으로 접속을 종료하는 패킷
-constexpr char CS_WARRIOR_AUTO_ATTACK = 6;			// 전사 직업 기본공격
-constexpr char CS_MAGE_AUTO_ATTACK = 7;			//마법사 직업 기본공격
-constexpr char CS_PRIEST_AUTO_ATTACK = 8;			// 사제 직업 기본공격
 
 
 constexpr char SC_LOGIN_INFO = 2;
@@ -119,11 +116,11 @@ struct SC_LOGIN_FAIL_PACKET {
 struct SC_STAT_CHANGE_PACKET {
 	unsigned short size;
 	char	type;
+	int		id;
 	int		hp;
 	int		max_hp;
 	int		exp;
 	int		level;
-
 };
 
 #pragma pack (pop)

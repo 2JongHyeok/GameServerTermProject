@@ -24,8 +24,12 @@ char my_map[W_HEIGHT][W_WIDTH];
 
 constexpr int VIEW_RANGE = 7;
 
-constexpr int STAT_ATK = 10;
-constexpr int STAT_ARMOR = 10;
+constexpr int WARRIOR_STAT_ATK = 10;
+constexpr int WARRIOR_STAT_ARMOR = 10;
+constexpr int MAGE_STAT_ATK = 20;
+constexpr int MAGE_STAT_ARMOR = 1;
+constexpr int PRIST_STAT_ATK = 5;
+constexpr int PRIST_STAT_ARMOR = 5;
 
 constexpr int SECTOR_SIZE = 20;
 concurrency::concurrent_unordered_map<int, int > Sector;
@@ -129,12 +133,16 @@ public:
 	int		hp_;
 	int		max_hp_;
 	int		exp_;
+	int		max_exp_;
 	int		level_;
 	mutex	ll_;
 	lua_State* L_;
 	int		prev_sector_;
 	int		now_sector_;
 	bool	in_use_;
+	int		dir_;
+	int		damage_;
+	int		armor_;
 
 public:
 	SESSION()
@@ -146,6 +154,10 @@ public:
 		state_ = ST_FREE;
 		prev_remain_ = 0;
 		in_use_ = true;
+		level_ = 1;
+		max_hp_ = 100;
+		hp_ = max_hp_; 
+		max_exp_ = 100;
 	}
 
 	~SESSION() {}
@@ -199,6 +211,32 @@ public:
 		do_send(&p);
 	}
 	void send_chat_packet(int p_id, const char* mess);
+	void send_stat_change_packet(int c_id, int max_hp,  int hp, int level, int exp) {
+		SC_STAT_CHANGE_PACKET p;
+		p.size = sizeof(p);
+		p.type = SC_STAT_CHANGE;
+		p.id = c_id;
+		p.max_hp = max_hp;
+		p.level = level;
+		p.exp = exp;
+		p.hp = hp;
+		do_send(&p);
+	}
+	void update_status() {
+		hp_ = 100;
+		if (visual_ == 0) {
+			damage_ = level_ * WARRIOR_STAT_ATK;
+			armor_ = level_ * WARRIOR_STAT_ARMOR;
+		}
+		else if (visual_ == 1) {
+			damage_ = level_ * MAGE_STAT_ATK;
+			armor_ = level_ * MAGE_STAT_ARMOR;
+		}
+		else if (visual_ == 2) {
+			damage_ = level_ * PRIST_STAT_ATK;
+			armor_ = level_ * PRIST_STAT_ARMOR;
+		}
+	}
 };
 array<SESSION, MAX_USER+MAX_NPC> clients;
 HANDLE h_iocp;
@@ -217,7 +255,114 @@ bool in_near_sector(int my_sector,int targer_sector) {
 	if (my_sector - 99 == targer_sector)return true;
 	return false;
 }
+enum ATTACK_TYPE { AUTO, SKILL1, SKILL2 };
 
+bool in_my_attack_range(int target, int player, int visual, ATTACK_TYPE attack_type, int dir) {
+	int t_x = clients[target].x_;
+	int t_y = clients[target].y_;
+	int p_x = clients[player].x_;
+	int p_y = clients[player].y_;
+	cout << dir << endl;
+	if (visual == 0) {
+		switch (attack_type)
+		{
+		case AUTO:
+			if (dir == 0) {
+				if (t_x != p_x) return false;
+				if (-1 <= t_y - p_y && t_y - p_y <= 0) {
+					return true;
+				}
+				return false;
+			}
+			else if (dir == 1) {
+				if (t_x != p_x) return false;
+				if (0 <= t_y - p_y && t_y - p_y <= 1) {
+					return true;
+				}
+				return false;
+			}
+			else if (dir == 2) {
+				if (t_y != p_y) return false;
+				if (-1 <= t_x - p_x && t_x - p_x <= 0) {
+					return true;
+				}
+				return false;
+			}
+			else if (dir == 3) {
+				if (t_y != p_y) return false;
+				if (0 <= t_x- p_x && t_x - p_x <= 1) {
+					return true;
+				}
+				return false;
+			}
+			return false;
+			break;
+		case SKILL1:
+			break;
+		case SKILL2:
+			break;
+		default:
+			break;
+		}
+	}
+	else if (visual == 1) {
+		switch (attack_type)
+		{
+		case AUTO:
+			if (dir == 0) {
+				if (t_x != p_x) return false;
+				if (-3 <= t_y - p_y && t_y - p_y <= 0) {
+					return true;
+				}
+				return false;
+			}
+			else if (dir == 1) {
+				if (t_x != p_x) return false;
+				if (0 <= t_y - p_y && t_y - p_y <= 3) {
+					return true;
+				}
+				return false;
+			}
+			else if (dir == 2) {
+				if (t_y != p_y) return false;
+				if (-3 <= t_x - p_x && t_x - p_x <= 0) {
+					return true;
+				}
+				return false;
+			}
+			else if (dir == 3) {
+				if (t_y != p_y) return false;
+				if (0 <= t_x - p_x && t_x - p_x <= 3) {
+					return true;
+				}
+				return false;
+			}
+			return false;
+			break;
+		case SKILL1:
+			break;
+		case SKILL2:
+			break;
+		default:
+			break;
+		}
+	}
+	else if (visual == 2) {
+		switch (attack_type)
+		{
+		case AUTO:
+			if (abs(t_x - p_x) > 5) return false;
+			return abs(t_y - p_y) <= 5;
+			break;
+		case SKILL1:
+			break;
+		case SKILL2:
+			break;
+		default:
+			break;
+		}
+	}
+}
 bool is_pc(int object_id)
 {
 	return object_id < MAX_USER;
@@ -303,38 +448,54 @@ void process_packet(int c_id, char* packet)
 	switch (packet[2]) {
 	case CS_LOGIN: {
 		CS_LOGIN_PACKET* p = reinterpret_cast<CS_LOGIN_PACKET*>(packet);
+		clients[c_id].in_use_ = true;
 		strcpy_s(clients[c_id].name_, p->name);
 		{
 			lock_guard<mutex> ll{ clients[c_id].s_lock_};
 			clients[c_id].x_ = rand() % W_WIDTH;
 			clients[c_id].y_ = rand() % W_HEIGHT;
-			clients[c_id].visual_ = rand() % 3;
+			clients[c_id].level_ = 1;
+			int visual = rand() % 3;
+			clients[c_id].visual_ = visual;
+			if (visual == 0) {
+				clients[c_id].damage_ = WARRIOR_STAT_ATK * clients[c_id].level_;
+				clients[c_id].armor_ = WARRIOR_STAT_ARMOR * clients[c_id].level_;
+			}
+			else if (visual == 1) {
+				clients[c_id].damage_ = MAGE_STAT_ATK * clients[c_id].level_;
+				clients[c_id].armor_ = MAGE_STAT_ARMOR * clients[c_id].level_;
+			}
+			else if (visual == 2) {
+				clients[c_id].damage_ = PRIST_STAT_ATK * clients[c_id].level_;
+				clients[c_id].armor_ = PRIST_STAT_ARMOR * clients[c_id].level_;
+			}
 			clients[c_id].state_ = ST_INGAME;
 		}
 		clients[c_id].send_login_info_packet();
 		clients[c_id].prev_sector_ = clients[c_id].x_ / SECTOR_SIZE + clients[c_id].y_ / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
 		clients[c_id].now_sector_ = clients[c_id].prev_sector_;
 		int my_sector = clients[c_id].now_sector_;
-		Sector.insert({ c_id, my_sector });
+		Sector[c_id]= my_sector;
 		for (auto& pl : Sector) {
-			if (!in_near_sector(my_sector, pl.second)) continue;
 			if (clients[pl.first].in_use_ == false) continue;
+			if (!in_near_sector(my_sector, pl.second)) continue;
 			{
 				lock_guard<mutex> ll(clients[pl.first].s_lock_);
 				if (ST_INGAME != clients[pl.first].state_) continue;
 			}
 			if (clients[pl.first].id_ == c_id) continue;
-			if (false == can_see(c_id, clients[pl.first].id_))
+			if (false == can_see(c_id, pl.first))
 				continue;
-			if (is_pc(clients[pl.first].id_)) clients[pl.first].send_add_object_packet(c_id);
-			else WakeUpNPC(clients[pl.first].id_, c_id);
-			clients[c_id].send_add_object_packet(clients[pl.first].id_);
+			if (is_pc(pl.first)) clients[pl.first].send_add_object_packet(c_id);
+			else WakeUpNPC(pl.first, c_id);
+			clients[c_id].send_add_object_packet(pl.first);
 		}
 		break;
 	}
 	case CS_MOVE: {
 		CS_MOVE_PACKET* p = reinterpret_cast<CS_MOVE_PACKET*>(packet);
 		clients[c_id].last_move_time_ = p->move_time;
+		clients[c_id].dir_ = p->direction;
 		short x = clients[c_id].x_;
 		short y = clients[c_id].y_;
 		clients[c_id].prev_sector_ = clients[c_id].now_sector_;
@@ -378,8 +539,8 @@ void process_packet(int c_id, char* packet)
 		clients[c_id].vl_.unlock();
 
 		for (auto& cl : Sector) {
-			if (!in_near_sector(my_sector,cl.second)) continue;
 			if (clients[cl.first].in_use_ == false) continue;
+			if (!in_near_sector(my_sector,cl.second)) continue;
 			if (clients[cl.first].state_ != ST_INGAME) continue;
 			if (clients[cl.first].id_ == c_id) continue;
 			if (can_see(c_id, clients[cl.first].id_))
@@ -416,8 +577,64 @@ void process_packet(int c_id, char* packet)
 		}
 		break;
 	}
-	case CS_WARRIOR_AUTO_ATTACK: {
+	case CS_ATTACK: {
+		int visual = clients[c_id].visual_;
+		int dir = clients[c_id].dir_;
+		clients[c_id].vl_.lock();
+		unordered_set<int> old_vlist = clients[c_id].view_list_;
+		clients[c_id].vl_.unlock();
+		int my_sector = clients[c_id].now_sector_;
 
+		for (auto& pl : old_vlist) {
+			if (clients[pl].in_use_ == false) continue;
+			if (visual != 2) {
+				if (is_pc(pl)) continue;
+				if (!in_my_attack_range(pl, c_id, visual, AUTO, dir)) continue;
+				clients[pl].hp_ -= clients[c_id].damage_;
+			}
+			else if (visual == 2) {
+				if (!in_my_attack_range(pl, c_id, visual, AUTO, dir)) continue;
+				if (is_pc(pl)) {
+					clients[pl].hp_ += clients[c_id].damage_;
+					clients[pl].send_stat_change_packet(pl,clients[pl].max_hp_, clients[pl].hp_,
+						clients[pl].level_, clients[pl].exp_);
+					continue;
+				}
+				else {
+					clients[pl].hp_ -= clients[c_id].damage_;
+				}
+			}
+
+			if (clients[pl].hp_ <= 0) {
+				clients[pl].in_use_ = false;
+				clients[c_id].exp_ += clients[pl].level_* 50;
+				if (clients[c_id].exp_ >= clients[c_id].max_exp_) {
+					clients[c_id].exp_ -= clients[c_id].max_exp_;
+					clients[c_id].max_exp_ *= 2;
+					clients[c_id].level_ += 1;
+					clients[c_id].update_status();
+					clients[c_id].send_stat_change_packet(c_id, clients[c_id].max_hp_,
+						clients[c_id].hp_,clients[c_id].level_, clients[c_id].exp_);
+				}
+			}
+			for (auto& ppl : Sector) {
+				if (clients[ppl.first].in_use_ == false) continue;
+				if (!in_near_sector(my_sector, ppl.second)) continue;
+				{
+					lock_guard<mutex> ll(clients[ppl.first].s_lock_);
+					if (ST_INGAME != clients[ppl.first].state_) continue;
+				}
+				if (!is_pc(ppl.first)) continue;
+				if (clients[pl].hp_ <= 0) {
+					clients[ppl.first].send_remove_player_packet(clients[pl].id_);
+				}
+				else {
+					clients[ppl.first].send_stat_change_packet(pl, clients[pl].max_hp_,
+						clients[pl].hp_, clients[pl].level_, clients[pl].exp_);
+				}
+			}
+		}
+		break;
 	}
 	}
 }
@@ -605,7 +822,7 @@ void do_npc_random_move(int npc_id)
 			clients[pl].send_move_packet(npc.id_);
 		}
 	}
-	///vvcxxccxvvdsvdvds
+
 	for (auto pl : old_vl) {
 		if (0 == new_vl.count(pl)) {
 			clients[pl].vl_.lock();
@@ -658,7 +875,7 @@ void worker_thread(HANDLE h_iocp)
 				clients[client_id].name_[0] = 0;
 				clients[client_id].prev_remain_ = 0;
 				clients[client_id].socket_ = g_c_socket;
-				clients[client_id].in_use_ = true;
+
 				CreateIoCompletionPort(reinterpret_cast<HANDLE>(g_c_socket),
 					h_iocp, client_id, 0);
 				clients[client_id].do_recv();

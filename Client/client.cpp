@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <Windows.h>
 #include <fstream>
+#include <stdio.h>
 using namespace std;
 
 //#pragma comment (lib, "opengl32.lib")
@@ -39,13 +40,18 @@ private:
 	sf::Sprite m_sprite_;
 
 	sf::Text m_name_;
+	sf::Text m_hp_;
 public:
 	int m_x_, m_y_;
+	int hp_;
+	int exp_;
+	int level_;
 	char name_[NAME_SIZE];
 	OBJECT(sf::Texture& t, int x, int y, int x2, int y2) {
 		m_showing_ = false;
 		m_sprite_.setTexture(t);
 		m_sprite_.setTextureRect(sf::IntRect(x, y, x2, y2));
+		hp_ = 100;
 	}
 	OBJECT() {
 		m_showing_ = false;
@@ -101,15 +107,29 @@ public:
 		float ry = (m_y_ - g_top_y) * 65.0f + 1;
 		m_sprite_.setPosition(rx, ry);
 		g_window->draw(m_sprite_);
+
 		auto size = m_name_.getGlobalBounds();
 		m_name_.setPosition(rx + 32 - size.width / 2, ry - 10);
 		g_window->draw(m_name_);
+
+		size = m_hp_.getGlobalBounds();
+		m_hp_.setPosition(rx + 32 - size.width / 2, ry - 30);
+		g_window->draw(m_hp_);
 	}
 	void set_name(const char str[]) {
 		m_name_.setFont(g_font);
 		m_name_.setString(str);
 		m_name_.setFillColor(sf::Color(255, 255, 0));
 		m_name_.setStyle(sf::Text::Bold);
+	}
+
+	void set_hp(int hp) {
+		char str[5];
+		sprintf_s(str, "%d", hp);
+		m_hp_.setFont(g_font);
+		m_hp_.setString(str);
+		m_hp_.setFillColor(sf::Color(255, 255, 0));
+		m_hp_.setStyle(sf::Text::Bold);
 	}
 };
 OBJECT avatar;
@@ -323,9 +343,13 @@ void ProcessPacket(char* ptr)
 		g_myid = packet->id;
 		avatar.m_x_ = packet->x;
 		avatar.m_y_ = packet->y;
+		avatar.hp_ = packet->hp;
+		avatar.level_ = packet->level;
+		avatar.exp_ = packet->exp;
 		g_left_x = packet->x - 10;
 		g_top_y = packet->y - 10;
 		avatar.change_texture(packet->visual);
+		avatar.set_hp(avatar.hp_);
 		avatar.show();
 	}
 	break;
@@ -346,12 +370,14 @@ void ProcessPacket(char* ptr)
 			players[id].change_texture(my_packet->visual);
 			players[id].move(my_packet->x, my_packet->y);
 			players[id].set_name(my_packet->name);
+			players[id].set_hp(players[id].hp_);
 			players[id].show();
 		}
 		else {
 			players[id] = OBJECT{ *pieces, 0, 0, 64, 64 };
 			players[id].move(my_packet->x, my_packet->y);
 			players[id].set_name(my_packet->name);
+			players[id].set_hp(players[id].hp_);
 			players[id].show();
 		}
 		break;
@@ -389,8 +415,26 @@ void ProcessPacket(char* ptr)
 		}
 		break;
 	}
+
+	case SC_STAT_CHANGE: {
+		SC_STAT_CHANGE_PACKET* my_packet = reinterpret_cast<SC_STAT_CHANGE_PACKET*>(ptr);
+		int other_id = my_packet->id;
+		if (other_id == g_myid) {
+			avatar.hp_ = my_packet->hp;
+			avatar.level_ = my_packet->level;
+			avatar.exp_ = my_packet->exp;
+		}
+		else {
+			players[other_id].hp_ = my_packet->hp;
+			players[other_id].level_ = my_packet->level;
+			players[other_id].exp_ = my_packet->exp;
+			players[other_id].set_hp(my_packet->hp);
+		}
+		break;
+		
+	}
 	default:
-		printf("Unknown PACKET type [%d]\n", ptr[1]);
+		printf("Unknown PACKET type [%d]\n", ptr[2]);
 	}
 }
 
@@ -441,12 +485,34 @@ void client_main()
 	
 	avatar.draw();
 	for (auto& pl : players) pl.second.draw();
+
 	sf::Text text;
 	text.setFont(g_font);
 	char buf[100];
 	sprintf_s(buf, "(%d, %d)", avatar.m_x_, avatar.m_y_);
 	text.setString(buf);
 	g_window->draw(text);
+
+	sf::Text hp_text;
+	hp_text.setFont(g_font);
+	sprintf_s(buf, "hp : %d", avatar.hp_);
+	hp_text.setString(buf);
+	hp_text.move(0, 30);
+	g_window->draw(hp_text);
+
+	sf::Text level_text;
+	level_text.setFont(g_font);
+	sprintf_s(buf, "level : %d", avatar.level_);
+	level_text.setString(buf);
+	level_text.move(0, 60);
+	g_window->draw(level_text);
+
+	sf::Text exp_text;
+	exp_text.setFont(g_font);
+	sprintf_s(buf, "exp : %d", avatar.exp_);
+	exp_text.setString(buf);
+	exp_text.move(0, 90);
+	g_window->draw(exp_text);
 }
 
 void send_packet(void* packet)
@@ -505,6 +571,13 @@ int main()
 				case sf::Keyboard::Down:
 					direction = 1;
 					break;
+				case sf::Keyboard::A: {
+					CS_ATTACK_PACKET p;
+					p.size = sizeof(p);
+					p.type = CS_ATTACK;
+					send_packet(&p);
+					break;
+				}
 				case sf::Keyboard::Escape:
 					window.close();
 					break;
