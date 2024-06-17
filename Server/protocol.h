@@ -4,7 +4,7 @@ constexpr int NAME_SIZE = 20;
 constexpr int CHAT_SIZE = 300;
 
 constexpr int MAX_USER = 10000;
-constexpr int MAX_NPC = 200000;
+constexpr int MAX_NPC = 20000;
 
 constexpr int W_WIDTH = 2000;
 constexpr int W_HEIGHT = 2000;
@@ -92,6 +92,7 @@ struct SC_REMOVE_OBJECT_PACKET {
 	unsigned short size;
 	char	type;
 	int		id;
+	int     target_id;
 };
 
 struct SC_MOVE_OBJECT_PACKET {
@@ -122,6 +123,13 @@ struct SC_STAT_CHANGE_PACKET {
 	int		max_hp;
 	int		exp;
 	int		level;
+};
+
+struct SC_GET_DAMAGE_PACKET {
+	unsigned short size;
+	char	type;
+	int		id;
+	int		got_damage;
 };
 
 #pragma pack (pop)

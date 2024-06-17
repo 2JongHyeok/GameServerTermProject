@@ -384,7 +384,7 @@ void ProcessPacket(char* ptr)
 			players[id].show();
 		}
 		break;
-	}
+	} 
 	case SC_MOVE_OBJECT:
 	{
 		SC_MOVE_OBJECT_PACKET* my_packet = reinterpret_cast<SC_MOVE_OBJECT_PACKET*>(ptr);
@@ -427,7 +427,6 @@ void ProcessPacket(char* ptr)
 			avatar.level_ = my_packet->level;
 			avatar.exp_ = my_packet->exp;
 			avatar.max_exp_ = pow(2,(avatar.level_-1))*100;
-
 		}
 		else {
 			players[other_id].hp_ = my_packet->hp;

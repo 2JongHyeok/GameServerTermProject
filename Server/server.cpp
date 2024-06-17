@@ -34,7 +34,7 @@ constexpr int PRIST_STAT_ARMOR = 5;
 constexpr int SECTOR_SIZE = 20;
 concurrency::concurrent_unordered_map<int, int > Sector;
 
-enum EVENT_TYPE { EV_RANDOM_MOVE };
+enum EVENT_TYPE { EV_RANDOM_MOVE, EV_RESURRECTION, EV_ATTACK};
 struct TIMER_EVENT {
 	int obj_id;
 	chrono::system_clock::time_point wakeup_time;
@@ -88,7 +88,7 @@ public:
 	}
 };
 
-enum COMP_TYPE { OP_ACCEPT, OP_RECV, OP_SEND, OP_NPC_MOVE, OP_AI_HELLO};
+enum COMP_TYPE { OP_ACCEPT, OP_RECV, OP_SEND, OP_NPC_MOVE,  OP_NPC_RESURRECTION, OP_NPC_ATTACK};
 class OVER_EXP {
 public:
 	WSAOVERLAPPED over_;
@@ -124,6 +124,7 @@ public:
 	int id_;
 	SOCKET socket_;
 	short	x_, y_;
+	short	first_x_,first_y_;
 	char	name_[NAME_SIZE];
 	unordered_set <int> view_list_;
 	mutex	vl_;
@@ -143,6 +144,7 @@ public:
 	int		dir_;
 	int		damage_;
 	int		armor_;
+
 
 public:
 	SESSION()
@@ -377,6 +379,18 @@ bool can_see(int from, int to)
 	if (abs(clients[from].x_ - clients[to].x_) > VIEW_RANGE) return false;
 	return abs(clients[from].y_ - clients[to].y_) <= VIEW_RANGE;
 }
+bool can_see_d(int from, int to, int* distance)
+{
+	if (abs(clients[from].x_ - clients[to].x_) > VIEW_RANGE) return false;
+	if (abs(clients[from].y_ - clients[to].y_) <= VIEW_RANGE) {
+		*distance = abs(clients[from].x_ - clients[to].x_);
+		if (*distance > abs(clients[from].y_ - clients[to].y_))
+			*distance = abs(clients[from].y_ - clients[to].y_);
+		return true;
+	}
+	return false;
+	
+}
 
 
 void SESSION::send_move_packet(int c_id)
@@ -430,11 +444,6 @@ int get_new_client_id()
 
 void WakeUpNPC(int npc_id, int waker)
 {
-	OVER_EXP* exover = new OVER_EXP;
-	exover->comp_type_ = OP_AI_HELLO;
-	exover->ai_target_obj_ = waker;
-	PostQueuedCompletionStatus(h_iocp, 1, npc_id, &exover->over_);
-
 	if (clients[npc_id].is_active_) return;
 	bool old_state = false;
 	if (false == atomic_compare_exchange_strong(&clients[npc_id].is_active_, &old_state, true))
@@ -454,6 +463,8 @@ void process_packet(int c_id, char* packet)
 			lock_guard<mutex> ll{ clients[c_id].s_lock_};
 			clients[c_id].x_ = rand() % W_WIDTH;
 			clients[c_id].y_ = rand() % W_HEIGHT;
+			clients[c_id].first_x_ = clients[c_id].x_;
+			clients[c_id].first_y_ = clients[c_id].y_;
 			clients[c_id].level_ = 1;
 			int visual = rand() % 3;
 			clients[c_id].visual_ = visual;
@@ -607,6 +618,8 @@ void process_packet(int c_id, char* packet)
 
 			if (clients[pl].hp_ <= 0) {
 				clients[pl].in_use_ = false;
+				TIMER_EVENT ev{ pl, chrono::system_clock::now() + 30s, EV_RESURRECTION, 0 };
+				timer_queue.push(ev);
 				clients[c_id].exp_ += clients[pl].level_* 50;
 				while (true) {
 					if (clients[c_id].exp_ >= clients[c_id].max_exp_) {
@@ -695,18 +708,30 @@ void InitializeNPC()
 		clients[i].now_sector_ = clients[i].prev_sector_;
 		Sector.insert({ i, clients[i].now_sector_ });
 		clients[i].id_ = i;
-		sprintf_s(clients[i].name_, "NPC%d", i);
 		clients[i].state_ = ST_INGAME;
 		if (rand() % 20 == 1) {
+			sprintf_s(clients[i].name_, "BOSS");
 			int level = rand() % 40 + 100;
 			clients[i].level_ = level;
-			clients[i].damage_ = level * 10;
+			clients[i].damage_ = level * 2;
 			clients[i].hp_ = level * 50;
 		}
 		else {
+			sprintf_s(clients[i].name_, "NPC%d", i);
 			int level = rand() % 40 + 1;
+			if(level <= 10)
+				sprintf_s(clients[i].name_, "slime%d", i);
+			else if(level <= 20)
+				sprintf_s(clients[i].name_, "KingKong%d", i);
+			else if (level <= 30)
+				sprintf_s(clients[i].name_, "KillerRobot%d", i);
+			else if (level <= 40)
+				sprintf_s(clients[i].name_, "Dog%d", i);
+			else {
+				sprintf_s(clients[i].name_, "Cat%d", i);
+			}
 			clients[i].level_ = level;
-			clients[i].damage_ = level * 10;
+			clients[i].damage_ = level * 2;
 			clients[i].hp_ = level * 50;
 		}
 
@@ -733,17 +758,30 @@ void do_timer()
 		auto current_time = chrono::system_clock::now();
 		if (true == timer_queue.try_pop(ev)) {
 			if (ev.wakeup_time > current_time) {
-				timer_queue.push(ev);		// 최적화 필요
-				// timer_queue에 다시 넣지 않고 처리해야 한다.
-				this_thread::sleep_for(1ms);  // 실행시간이 아직 안되었으므로 잠시 대기
+				timer_queue.push(ev);
+				if (ev.event_id == EV_RANDOM_MOVE)
+					this_thread::sleep_for(1s);
 				continue;
 			}
 			switch (ev.event_id) {
-			case EV_RANDOM_MOVE:
+			case EV_RANDOM_MOVE: {
 				OVER_EXP* ov = new OVER_EXP;
 				ov->comp_type_ = OP_NPC_MOVE;
 				PostQueuedCompletionStatus(h_iocp, 1, ev.obj_id, &ov->over_);
 				break;
+			}
+			case EV_RESURRECTION: {
+				OVER_EXP* ov = new OVER_EXP;
+				ov->comp_type_ = OP_NPC_RESURRECTION;
+				PostQueuedCompletionStatus(h_iocp, 1, ev.obj_id, &ov->over_);
+				break;
+			}
+			case EV_ATTACK: {
+				OVER_EXP* ov = new OVER_EXP;
+				ov->comp_type_ = OP_NPC_ATTACK;
+				PostQueuedCompletionStatus(h_iocp, 1, ev.obj_id, &ov->over_);
+				break;
+			}
 			}
 			continue;		// 즉시 다음 작업 꺼내기
 		}
@@ -777,17 +815,64 @@ void do_npc_random_move(int npc_id)
 	SESSION& npc = clients[npc_id];
 	int my_sector = Sector[npc_id];
 	unordered_set<int> old_vl;
+	int distance;
+	int min_distance = 100;
+	int nearest = -1;
 	for (auto& obj : Sector) {
 		if (clients[obj.first].in_use_ == false) continue;
 		if (!in_near_sector(my_sector,obj.second)) continue;
 		if (ST_INGAME != clients[obj.first].state_) continue;
-		if (true == is_npc(clients[obj.first].id_)) continue;
-		if (true == can_see(npc.id_, clients[obj.first].id_))
+		if (true == is_npc(obj.first)) continue;
+		if (true == can_see_d(npc.id_, obj.first, &distance)) {
+			if (distance < min_distance) {
+				min_distance = distance;
+				nearest = obj.first;
+			}
 			old_vl.insert(clients[obj.first].id_);
+		}
 	}
+	if (min_distance <= 3) {
+		if (npc.level_ <= 10) {
+			if (min_distance <= 3) {
+				clients[nearest].hp_ -= (npc.damage_ - clients[nearest].armor_);
+			}
+		}
+		else if (npc.level_ <= 20) {
+			if (min_distance <= 2) {
+				clients[nearest].hp_ -= (npc.damage_ - clients[nearest].armor_);
+			}
+		}
+		else if (npc.level_ <= 30) {
+			if (min_distance <= 1) {
+				clients[nearest].hp_ -= (npc.damage_ - clients[nearest].armor_);
+			}
+		}
+		else if (npc.level_ <= 40) {
+			if (min_distance <= 1) {
+				clients[nearest].hp_ -= (npc.damage_ - clients[nearest].armor_);
+			}
+		}
+
+		if (clients[nearest].hp_ > 0) {
+			clients[nearest].send_stat_change_packet(nearest, clients[nearest].max_hp_,
+				clients[nearest].hp_, clients[nearest].level_, clients[nearest].exp_);
+		}
+		else {
+			clients[nearest].hp_ = 100;
+			clients[nearest].x_ = clients[nearest].first_x_;
+			clients[nearest].y_ = clients[nearest].first_y_;
+			clients[nearest].exp_ /= 2;
+			clients[nearest].send_stat_change_packet(nearest, clients[nearest].max_hp_,
+				clients[nearest].hp_, clients[nearest].level_, clients[nearest].exp_);
+			clients[nearest].send_move_packet(nearest);
+		}
+		return;
+	}
+
 
 	int x = npc.x_;
 	int y = npc.y_;
+	
 	switch (rand() % 4) {
 	case 0: {
 		if (y <= 0) break;
@@ -816,6 +901,8 @@ void do_npc_random_move(int npc_id)
 	}
 	npc.x_ = x;
 	npc.y_ = y;
+	
+
 	clients[npc_id].prev_sector_ = clients[npc_id].now_sector_;
 	clients[npc_id].now_sector_ = x / SECTOR_SIZE + y / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
 	if (clients[npc_id].prev_sector_ != clients[npc_id].now_sector_) {
@@ -827,8 +914,8 @@ void do_npc_random_move(int npc_id)
 		if (clients[obj.first].in_use_ == false) continue;
 		if (!in_near_sector(my_sector,obj.second)) continue;
 		if (ST_INGAME != clients[obj.first].state_) continue;
-		if (true == is_npc(clients[obj.first].id_)) continue;
-		if (true == can_see(npc.id_, clients[obj.first].id_))
+		if (true == is_npc(obj.first)) continue;
+		if (true == can_see(npc.id_, obj.first))
 			new_vl.insert(clients[obj.first].id_);
 	}
 
@@ -987,7 +1074,7 @@ int main()
 	AcceptEx(g_s_socket, g_c_socket, g_a_over.send_buf_, 0, addr_size + 16, addr_size + 16, 0, &g_a_over.over_);
 
 	vector <thread> worker_threads;
-	int num_threads = std::thread::hardware_concurrency();
+	int num_threads = std::thread::hardware_concurrency()-1;
 	for (int i = 0; i < num_threads; ++i)
 		worker_threads.emplace_back(worker_thread, h_iocp);
 	thread timer_thread{ do_timer };
