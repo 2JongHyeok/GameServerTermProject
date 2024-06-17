@@ -122,6 +122,8 @@ public:
 	int		exp_;
 	int		level_;
 	mutex	ll_;
+	lua_State* L_;
+
 public:
 	SESSION()
 	{
@@ -185,6 +187,11 @@ public:
 	}
 	void send_chat_packet(int p_id, const char* mess);
 };
+array<SESSION, MAX_USER+MAX_NPC> clients;
+HANDLE h_iocp;
+SOCKET g_s_socket, g_c_socket;
+OVER_EXP g_a_over;
+
 bool is_pc(int object_id)
 {
 	return object_id < MAX_USER;
@@ -200,10 +207,7 @@ bool can_see(int from, int to)
 	if (abs(clients[from].x_ - clients[to].x_) > VIEW_RANGE) return false;
 	return abs(clients[from].y_ - clients[to].y_) <= VIEW_RANGE;
 }
-array<SESSION, MAX_USER+MAX_NPC> clients;
-HANDLE h_iocp;
-SOCKET g_s_socket, g_c_socket;
-OVER_EXP g_a_over;
+
 
 void SESSION::send_move_packet(int c_id)
 {
@@ -362,7 +366,7 @@ int API_get_x(lua_State* L)
 	int user_id =
 		(int)lua_tointeger(L, -1);
 	lua_pop(L, 2);
-	int x = clients[user_id].x;
+	int x = clients[user_id].x_;
 	lua_pushnumber(L, x);
 	return 1;
 }
@@ -372,7 +376,7 @@ int API_get_y(lua_State* L)
 	int user_id =
 		(int)lua_tointeger(L, -1);
 	lua_pop(L, 2);
-	int y = clients[user_id].y;
+	int y = clients[user_id].y_;
 	lua_pushnumber(L, y);
 	return 1;
 }
@@ -393,13 +397,13 @@ void InitializeNPC()
 {
 	cout << "NPC intialize begin.\n";
 	for (int i = MAX_USER; i < MAX_USER + MAX_NPC; ++i) {
-		clients[i].x = rand() % W_WIDTH;
-		clients[i].y = rand() % W_HEIGHT;
-		clients[i]._id = i;
-		sprintf_s(clients[i]._name, "NPC%d", i);
-		clients[i]._state = ST_INGAME;
+		clients[i].x_ = rand() % W_WIDTH;
+		clients[i].y_ = rand() % W_HEIGHT;
+		clients[i].id_ = i;
+		sprintf_s(clients[i].name_, "NPC%d", i);
+		clients[i].state_ = ST_INGAME;
 
-		auto L = clients[i]._L = luaL_newstate();
+		auto L = clients[i].L_ = luaL_newstate();
 		luaL_openlibs(L);
 		luaL_loadfile(L, "npc.lua");
 		lua_pcall(L, 0, 0, 0);
@@ -431,8 +435,8 @@ void do_timer()
 			switch (ev.event_id) {
 			case EV_RANDOM_MOVE:
 				OVER_EXP* ov = new OVER_EXP;
-				ov->_comp_type = OP_NPC_MOVE;
-				PostQueuedCompletionStatus(h_iocp, 1, ev.obj_id, &ov->_over);
+				ov->comp_type_ = OP_NPC_MOVE;
+				PostQueuedCompletionStatus(h_iocp, 1, ev.obj_id, &ov->over_);
 				break;
 			}
 			continue;		// 즉시 다음 작업 꺼내기
@@ -540,6 +544,11 @@ int main()
 	map_loader ml;
 	ml.Load_Map_info();
 	printf("맵 정보 준비완료\n");
+
+	printf("몬스터 정보 준비중\n");
+	InitializeNPC();
+	printf("몬스터 정보 준비완료\n");
+
 	WSADATA WSAData;
 	WSAStartup(MAKEWORD(2, 2), &WSAData);
 	g_s_socket = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
