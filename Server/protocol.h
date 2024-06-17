@@ -72,7 +72,7 @@ struct CS_ATTACK_PACKET {
 struct SC_LOGIN_INFO_PACKET {
 	unsigned short size;
 	char	type;
-	int		visual;				// 종족, 성별등을 구분할 때 사용
+	int		visual;				// 0 : 전사, 1 : 마법사, 2 : 사제
 	int		id;
 	int		hp;
 	int		max_hp;

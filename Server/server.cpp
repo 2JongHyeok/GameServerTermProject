@@ -170,7 +170,7 @@ public:
 		SC_LOGIN_INFO_PACKET p;
 		p.size = sizeof(SC_LOGIN_INFO_PACKET);
 		p.type = SC_LOGIN_INFO;
-		p.visual = 0;
+		p.visual = visual_;
 		p.id = id_;
 		p.hp = hp_;
 		p.max_hp = max_hp_;
@@ -308,6 +308,7 @@ void process_packet(int c_id, char* packet)
 			lock_guard<mutex> ll{ clients[c_id].s_lock_};
 			clients[c_id].x_ = rand() % W_WIDTH;
 			clients[c_id].y_ = rand() % W_HEIGHT;
+			clients[c_id].visual_ = rand() % 3;
 			clients[c_id].state_ = ST_INGAME;
 		}
 		clients[c_id].send_login_info_packet();
@@ -657,6 +658,7 @@ void worker_thread(HANDLE h_iocp)
 				clients[client_id].name_[0] = 0;
 				clients[client_id].prev_remain_ = 0;
 				clients[client_id].socket_ = g_c_socket;
+				clients[client_id].in_use_ = true;
 				CreateIoCompletionPort(reinterpret_cast<HANDLE>(g_c_socket),
 					h_iocp, client_id, 0);
 				clients[client_id].do_recv();

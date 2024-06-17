@@ -31,6 +31,7 @@ sf::RenderWindow* g_window;
 sf::Font g_font;
 
 char my_map[W_HEIGHT][W_WIDTH];
+sf::Texture* my_charactor;
 
 class OBJECT {
 private:
@@ -48,6 +49,30 @@ public:
 	}
 	OBJECT() {
 		m_showing_ = false;
+	}
+	void change_texture(int visual){
+		my_charactor = new sf::Texture;
+		
+		if (visual == 0) {
+			my_charactor->loadFromFile("warrior.png");
+			m_sprite_.setTexture(*my_charactor);
+			m_sprite_.setTextureRect(sf::IntRect(0, 0, 134, 134));
+			m_sprite_.setScale(0.5, 0.5);
+		}
+		else if (visual == 1) {
+			my_charactor->loadFromFile("mage.png");
+			m_sprite_.setTexture(*my_charactor);
+			m_sprite_.setTextureRect(sf::IntRect(0, 0, 130, 130));
+			m_sprite_.setScale(0.5, 0.5);
+
+		}
+		else if (visual == 2) {
+			my_charactor->loadFromFile("prist.png");
+			m_sprite_.setTexture(*my_charactor);
+			m_sprite_.setTextureRect(sf::IntRect(0, 0, 136, 136));
+			m_sprite_.setScale(0.5, 0.5);
+
+		}
 	}
 	void show()
 	{
@@ -267,14 +292,11 @@ public:
 
 
 map_loader ml;
-sf::Texture* board;
 sf::Texture* pieces;
 
 void client_initialize()
 {
-	board = new sf::Texture;
 	pieces = new sf::Texture;
-	board->loadFromFile("chessmap.bmp");
 	pieces->loadFromFile("chess2.png");
 	if (false == g_font.loadFromFile("cour.ttf")) {
 		cout << "Font Loading Error!\n";
@@ -287,7 +309,6 @@ void client_initialize()
 void client_finish()
 {
 	players.clear();
-	delete board;
 	delete pieces;
 }
 
@@ -304,6 +325,7 @@ void ProcessPacket(char* ptr)
 		avatar.m_y_ = packet->y;
 		g_left_x = packet->x - 10;
 		g_top_y = packet->y - 10;
+		avatar.change_texture(packet->visual);
 		avatar.show();
 	}
 	break;
@@ -449,9 +471,9 @@ int main()
 	p.size = sizeof(p);
 	p.type = CS_LOGIN;
 
-	string player_name{ "P" };
-	player_name += to_string(GetCurrentProcessId());
-
+	string player_name;
+	cout << "Enter player_name : " << endl;
+	cin >> player_name;
 	strcpy_s(p.name, player_name.c_str());
 	send_packet(&p);
 	avatar.set_name(p.name);
