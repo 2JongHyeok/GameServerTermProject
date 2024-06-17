@@ -45,6 +45,7 @@ public:
 	int m_x_, m_y_;
 	int hp_;
 	int exp_;
+	int max_exp_;
 	int level_;
 	char name_[NAME_SIZE];
 	OBJECT(sf::Texture& t, int x, int y, int x2, int y2) {
@@ -52,6 +53,7 @@ public:
 		m_sprite_.setTexture(t);
 		m_sprite_.setTextureRect(sf::IntRect(x, y, x2, y2));
 		hp_ = 100;
+		max_exp_ = 100;
 	}
 	OBJECT() {
 		m_showing_ = false;
@@ -423,6 +425,8 @@ void ProcessPacket(char* ptr)
 			avatar.hp_ = my_packet->hp;
 			avatar.level_ = my_packet->level;
 			avatar.exp_ = my_packet->exp;
+			avatar.max_exp_ = pow(2,(avatar.level_-1))*100;
+
 		}
 		else {
 			players[other_id].hp_ = my_packet->hp;
@@ -509,7 +513,7 @@ void client_main()
 
 	sf::Text exp_text;
 	exp_text.setFont(g_font);
-	sprintf_s(buf, "exp : %d", avatar.exp_);
+	sprintf_s(buf, "exp : %d / %d", avatar.exp_, avatar.max_exp_);
 	exp_text.setString(buf);
 	exp_text.move(0, 90);
 	g_window->draw(exp_text);

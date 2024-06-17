@@ -262,7 +262,6 @@ bool in_my_attack_range(int target, int player, int visual, ATTACK_TYPE attack_t
 	int t_y = clients[target].y_;
 	int p_x = clients[player].x_;
 	int p_y = clients[player].y_;
-	cout << dir << endl;
 	if (visual == 0) {
 		switch (attack_type)
 		{
@@ -615,6 +614,10 @@ void process_packet(int c_id, char* packet)
 					clients[c_id].update_status();
 					clients[c_id].send_stat_change_packet(c_id, clients[c_id].max_hp_,
 						clients[c_id].hp_,clients[c_id].level_, clients[c_id].exp_);
+				}
+				else {
+					clients[c_id].send_stat_change_packet(c_id, clients[c_id].max_hp_,
+						clients[c_id].hp_, clients[c_id].level_, clients[c_id].exp_);
 				}
 			}
 			for (auto& ppl : Sector) {
