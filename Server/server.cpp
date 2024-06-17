@@ -456,8 +456,15 @@ int API_SendMessage(lua_State* L)
 void InitializeNPC()
 {
 	for (int i = MAX_USER; i < MAX_USER + MAX_NPC; ++i) {
-		clients[i].x_ = rand() % W_WIDTH;
-		clients[i].y_ = rand() % W_HEIGHT;
+		int x, y;
+		while (true) {
+			x = rand() % W_WIDTH; 
+			y = rand() % W_HEIGHT;
+			if (my_map[y][x] == 50)
+				break;
+		}
+		clients[i].x_ = x;
+		clients[i].y_ = y;
 		clients[i].prev_sector_ = clients[i].x_ / SECTOR_SIZE + clients[i].y_ / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
 		clients[i].now_sector_ = clients[i].prev_sector_;
 		Sector.insert({ i, clients[i].now_sector_ });
