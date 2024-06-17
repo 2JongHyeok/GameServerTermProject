@@ -4,7 +4,7 @@ constexpr int NAME_SIZE = 20;
 constexpr int CHAT_SIZE = 300;
 
 constexpr int MAX_USER = 10000;
-constexpr int MAX_NPC = 20000;
+constexpr int MAX_NPC = 200000;
 
 constexpr int W_WIDTH = 2000;
 constexpr int W_HEIGHT = 2000;
@@ -84,6 +84,7 @@ struct SC_ADD_OBJECT_PACKET {
 	int		id;
 	int		visual;		// 0 : 플레이어,  1 : NPC
 	short	x, y;
+	int		hp;
 	char	name[NAME_SIZE];
 };
 

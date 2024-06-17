@@ -397,6 +397,7 @@ void SESSION::send_add_object_packet(int c_id)
 	add_packet.size = sizeof(SC_ADD_OBJECT_PACKET);
 	add_packet.type = SC_ADD_OBJECT;
 	add_packet.id = c_id;
+	add_packet.hp = clients[c_id].hp_;
 	add_packet.visual = clients[c_id].visual_;
 	strcpy_s(add_packet.name, clients[c_id].name_);
 	add_packet.x = clients[c_id].x_;
@@ -607,18 +608,22 @@ void process_packet(int c_id, char* packet)
 			if (clients[pl].hp_ <= 0) {
 				clients[pl].in_use_ = false;
 				clients[c_id].exp_ += clients[pl].level_* 50;
-				if (clients[c_id].exp_ >= clients[c_id].max_exp_) {
-					clients[c_id].exp_ -= clients[c_id].max_exp_;
-					clients[c_id].max_exp_ *= 2;
-					clients[c_id].level_ += 1;
-					clients[c_id].update_status();
-					clients[c_id].send_stat_change_packet(c_id, clients[c_id].max_hp_,
-						clients[c_id].hp_,clients[c_id].level_, clients[c_id].exp_);
+				while (true) {
+					if (clients[c_id].exp_ >= clients[c_id].max_exp_) {
+						clients[c_id].exp_ -= clients[c_id].max_exp_;
+						clients[c_id].max_exp_ *= 2;
+						clients[c_id].level_ += 1;
+						clients[c_id].update_status();
+						clients[c_id].send_stat_change_packet(c_id, clients[c_id].max_hp_,
+							clients[c_id].hp_, clients[c_id].level_, clients[c_id].exp_);
+					}
+					else {
+						clients[c_id].send_stat_change_packet(c_id, clients[c_id].max_hp_,
+							clients[c_id].hp_, clients[c_id].level_, clients[c_id].exp_);
+						break;
+					}
 				}
-				else {
-					clients[c_id].send_stat_change_packet(c_id, clients[c_id].max_hp_,
-						clients[c_id].hp_, clients[c_id].level_, clients[c_id].exp_);
-				}
+				
 			}
 			for (auto& ppl : Sector) {
 				if (clients[ppl.first].in_use_ == false) continue;
@@ -679,7 +684,7 @@ void InitializeNPC()
 	for (int i = MAX_USER; i < MAX_USER + MAX_NPC; ++i) {
 		int x, y;
 		while (true) {
-			x = rand() % W_WIDTH; 
+			x = rand() %W_WIDTH; 
 			y = rand() % W_HEIGHT;
 			if (my_map[y][x] == 50)
 				break;
@@ -692,6 +697,18 @@ void InitializeNPC()
 		clients[i].id_ = i;
 		sprintf_s(clients[i].name_, "NPC%d", i);
 		clients[i].state_ = ST_INGAME;
+		if (rand() % 20 == 1) {
+			int level = rand() % 40 + 100;
+			clients[i].level_ = level;
+			clients[i].damage_ = level * 10;
+			clients[i].hp_ = level * 50;
+		}
+		else {
+			int level = rand() % 40 + 1;
+			clients[i].level_ = level;
+			clients[i].damage_ = level * 10;
+			clients[i].hp_ = level * 50;
+		}
 
 		auto L = clients[i].L_ = luaL_newstate();
 		luaL_openlibs(L);
@@ -705,7 +722,7 @@ void InitializeNPC()
 
 		lua_register(L, "API_SendMessage", API_SendMessage);
 		lua_register(L, "API_get_x", API_get_x);
-		lua_register(L, "API_get_y", API_get_y);
+		lua_register(L, "API_get_y", API_get_y); 
 	}
 }
 

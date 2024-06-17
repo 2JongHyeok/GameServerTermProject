@@ -126,6 +126,7 @@ public:
 	}
 
 	void set_hp(int hp) {
+		hp_ = hp;
 		char str[5];
 		sprintf_s(str, "%d", hp);
 		m_hp_.setFont(g_font);
@@ -372,14 +373,14 @@ void ProcessPacket(char* ptr)
 			players[id].change_texture(my_packet->visual);
 			players[id].move(my_packet->x, my_packet->y);
 			players[id].set_name(my_packet->name);
-			players[id].set_hp(players[id].hp_);
+			players[id].set_hp(my_packet->hp);
 			players[id].show();
 		}
 		else {
 			players[id] = OBJECT{ *pieces, 0, 0, 64, 64 };
 			players[id].move(my_packet->x, my_packet->y);
 			players[id].set_name(my_packet->name);
-			players[id].set_hp(players[id].hp_);
+			players[id].set_hp(my_packet->hp);
 			players[id].show();
 		}
 		break;
