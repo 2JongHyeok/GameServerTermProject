@@ -194,13 +194,14 @@ public:
 		p.y = y_;
 		do_send(&p);
 	}
-	void send_get_damage_packet(int c_id, int damage) {
+	void send_get_damage_packet(int c_id, int damage, int hp) {
 
 		SC_GET_DAMAGE_PACKET p;
 		p.size = sizeof(SC_GET_DAMAGE_PACKET);
 		p.type = SC_GET_DAMAGE;
 		p.id = c_id;
 		p.got_damage = damage;
+		p.hp = hp;
 		do_send(&p);
 	}
 	void send_move_packet(int c_id);
@@ -616,6 +617,7 @@ void process_packet(int c_id, char* packet)
 				if (!in_my_attack_range(pl, c_id, visual, AUTO, dir)) continue;
 				if (is_pc(pl)) {
 					clients[pl].hp_ += clients[c_id].damage_;
+					if (clients[pl].hp_ > 100)clients[pl].hp_ = 100;
 					clients[pl].send_stat_change_packet(pl,clients[pl].max_hp_, clients[pl].hp_,
 						clients[pl].level_, clients[pl].exp_);
 					continue;
@@ -821,6 +823,8 @@ void disconnect(int c_id)
 }
 void do_npc_random_move(int npc_id)
 {
+	if (clients[npc_id].in_use_ == false)
+		return;
 	SESSION& npc = clients[npc_id];
 	int my_sector = Sector[npc_id];
 	unordered_set<int> old_vl;
@@ -841,29 +845,36 @@ void do_npc_random_move(int npc_id)
 		}
 	}
 	if (min_distance <= 3) {
+		int damage = npc.damage_ - clients[nearest].armor_;
+		if (damage < 0) damage = 0;
 		if (npc.level_ <= 10) {
 			if (min_distance <= 3) {
-				clients[nearest].hp_ -= (npc.damage_ - clients[nearest].armor_);
+				clients[nearest].hp_ -= damage;
 			}
 		}
 		else if (npc.level_ <= 20) {
 			if (min_distance <= 2) {
-				clients[nearest].hp_ -= (npc.damage_ - clients[nearest].armor_);
+				clients[nearest].hp_ -= damage;
 			}
 		}
 		else if (npc.level_ <= 30) {
 			if (min_distance <= 1) {
-				clients[nearest].hp_ -= (npc.damage_ - clients[nearest].armor_);
+				clients[nearest].hp_ -= damage;
 			}
 		}
 		else if (npc.level_ <= 40) {
 			if (min_distance <= 1) {
-				clients[nearest].hp_ -= (npc.damage_ - clients[nearest].armor_);
+				clients[nearest].hp_ -= damage;
+			}
+		}
+		else {
+			if (min_distance <= 1) {
+				clients[nearest].hp_ -= damage;
 			}
 		}
 
 		if (clients[nearest].hp_ > 0) {
-			clients[nearest].send_get_damage_packet(npc_id, npc.damage_ - clients[nearest].armor_);
+			clients[nearest].send_get_damage_packet(npc_id, damage, clients[nearest].hp_);
 		}
 		else {
 			clients[nearest].hp_ = 100;

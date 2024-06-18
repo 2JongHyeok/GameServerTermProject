@@ -441,7 +441,7 @@ void ProcessPacket(char* ptr)
 	case SC_GET_DAMAGE: {
 		SC_GET_DAMAGE_PACKET* my_packet = reinterpret_cast<SC_GET_DAMAGE_PACKET*>(ptr);
 		printf("Player Get %d Damage From Monster Id : %d\n", my_packet->got_damage, my_packet->id);
-		avatar.hp_ -= my_packet->got_damage;
+		avatar.hp_ = my_packet->hp;
 		break;
 	}
 	default:

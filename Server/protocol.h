@@ -130,6 +130,7 @@ struct SC_GET_DAMAGE_PACKET {
 	unsigned short size;
 	char	type;
 	int		id;
+	int		hp;
 	int		got_damage;
 };
 
