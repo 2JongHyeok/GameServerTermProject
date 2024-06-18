@@ -589,6 +589,13 @@ int main()
 					send_packet(&p);
 					break;
 				}
+				case sf::Keyboard::T:{
+					CS_TELEPORT_PACKET p;
+					p.size = sizeof(p);
+					p.type = CS_TELEPORT;
+					send_packet(&p);
+					break;
+				}
 				case sf::Keyboard::Escape:
 					window.close();
 					break;

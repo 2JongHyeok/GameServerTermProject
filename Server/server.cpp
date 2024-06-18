@@ -668,6 +668,36 @@ void process_packet(int c_id, char* packet)
 		}
 		break;
 	}
+	case CS_TELEPORT: {
+		int x, y;
+		while (true) {
+			x = rand() % W_WIDTH;
+			y = rand() % W_HEIGHT;
+			if (my_map[y][x] == 50)
+				break;
+		}
+		clients[c_id].x_ = x;
+		clients[c_id].y_ = y;
+		clients[c_id].send_move_packet(c_id);
+		clients[c_id].prev_sector_ = clients[c_id].x_ / SECTOR_SIZE + clients[c_id].y_ / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
+		clients[c_id].now_sector_ = clients[c_id].prev_sector_;
+		int my_sector = clients[c_id].now_sector_;
+		Sector[c_id] = my_sector;
+		for (auto& pl : Sector) {
+			if (clients[pl.first].in_use_ == false) continue;
+			if (!in_near_sector(my_sector, pl.second)) continue;
+			{
+				lock_guard<mutex> ll(clients[pl.first].s_lock_);
+				if (ST_INGAME != clients[pl.first].state_) continue;
+			}
+			if (clients[pl.first].id_ == c_id) continue;
+			if (false == can_see(c_id, pl.first))
+				continue;
+			if (is_pc(pl.first)) clients[pl.first].send_add_object_packet(c_id);
+			else WakeUpNPC(pl.first, c_id);
+			clients[c_id].send_add_object_packet(pl.first);
+		}
+	}
 	}
 }
 
