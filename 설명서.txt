@@ -1,0 +1,28 @@
+설명서
+
+방향키로 이동.
+A키로 공격
+T키로 텔레포트
+
+프로토콜 
+constexpr char CS_LOGIN = 0;
+constexpr char CS_MOVE = 1;
+constexpr char CS_CHAT = 2;
+constexpr char CS_ATTACK = 3;			// 4 방향 공격
+constexpr char CS_TELEPORT = 4;			// RANDOM한 위치로 Teleport, Stress Test할 때 Hot Spot현상을 피하기 위해 구현
+constexpr char CS_LOGOUT = 5;			// 클라이언트에서 정상적으로 접속을 종료하는 패킷
+
+
+constexpr char SC_LOGIN_INFO = 2;
+constexpr char SC_LOGIN_FAIL = 3;
+constexpr char SC_ADD_OBJECT = 4;
+constexpr char SC_REMOVE_OBJECT = 5;
+constexpr char SC_MOVE_OBJECT = 6;
+constexpr char SC_CHAT = 7;
+constexpr char SC_STAT_CHANGE = 8;
+constexpr char SC_GET_DAMAGE = 9;
+
+
+섹터 : concurrency::concurrent_unordered_map<int, int > Sector;
+array<SESSION, MAX_USER+MAX_NPC> clients;
+NPC및 클라이언트 관련
