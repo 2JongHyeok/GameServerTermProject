@@ -942,8 +942,10 @@ void do_npc_random_move(int npc_id)
 		break;
 	}
 	}
-	npc.x_ = x;
-	npc.y_ = y;
+	if (npc.level_ > 10) {
+		npc.x_ = x;
+		npc.y_ = y;
+	}
 	
 
 	clients[npc_id].prev_sector_ = clients[npc_id].now_sector_;
@@ -1073,6 +1075,8 @@ void worker_thread(HANDLE h_iocp)
 			}
 			if (true == keep_alive) {
 				do_npc_random_move(static_cast<int>(key));
+				if (clients[static_cast<int>(key)].in_use_ == false)
+					break;
 				TIMER_EVENT ev{ key, chrono::system_clock::now() + 1s, EV_RANDOM_MOVE, 0 };
 				timer_queue.push(ev);
 			}
