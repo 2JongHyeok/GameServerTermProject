@@ -27,6 +27,7 @@ constexpr char SC_REMOVE_OBJECT = 5;
 constexpr char SC_MOVE_OBJECT = 6;
 constexpr char SC_CHAT = 7;
 constexpr char SC_STAT_CHANGE = 8;
+constexpr char SC_GET_DAMAGE = 9;
 
 #pragma pack (push, 1)
 struct CS_LOGIN_PACKET {

@@ -194,6 +194,15 @@ public:
 		p.y = y_;
 		do_send(&p);
 	}
+	void send_get_damage_packet(int c_id, int damage) {
+
+		SC_GET_DAMAGE_PACKET p;
+		p.size = sizeof(SC_GET_DAMAGE_PACKET);
+		p.type = SC_GET_DAMAGE;
+		p.id = c_id;
+		p.got_damage = damage;
+		do_send(&p);
+	}
 	void send_move_packet(int c_id);
 	void send_add_object_packet(int c_id);
 	void send_remove_player_packet(int c_id)
@@ -384,7 +393,7 @@ bool can_see_d(int from, int to, int* distance)
 	if (abs(clients[from].x_ - clients[to].x_) > VIEW_RANGE) return false;
 	if (abs(clients[from].y_ - clients[to].y_) <= VIEW_RANGE) {
 		*distance = abs(clients[from].x_ - clients[to].x_);
-		if (*distance > abs(clients[from].y_ - clients[to].y_))
+		if (*distance < abs(clients[from].y_ - clients[to].y_))
 			*distance = abs(clients[from].y_ - clients[to].y_);
 		return true;
 	}
@@ -816,7 +825,7 @@ void do_npc_random_move(int npc_id)
 	int my_sector = Sector[npc_id];
 	unordered_set<int> old_vl;
 	int distance;
-	int min_distance = 100;
+	int min_distance = 5;
 	int nearest = -1;
 	for (auto& obj : Sector) {
 		if (clients[obj.first].in_use_ == false) continue;
@@ -854,8 +863,7 @@ void do_npc_random_move(int npc_id)
 		}
 
 		if (clients[nearest].hp_ > 0) {
-			clients[nearest].send_stat_change_packet(nearest, clients[nearest].max_hp_,
-				clients[nearest].hp_, clients[nearest].level_, clients[nearest].exp_);
+			clients[nearest].send_get_damage_packet(npc_id, npc.damage_ - clients[nearest].armor_);
 		}
 		else {
 			clients[nearest].hp_ = 100;
