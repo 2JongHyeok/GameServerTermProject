@@ -817,12 +817,6 @@ void do_timer()
 				PostQueuedCompletionStatus(h_iocp, 1, ev.obj_id, &ov->over_);
 				break;
 			}
-			case EV_ATTACK: {
-				OVER_EXP* ov = new OVER_EXP;
-				ov->comp_type_ = OP_NPC_ATTACK;
-				PostQueuedCompletionStatus(h_iocp, 1, ev.obj_id, &ov->over_);
-				break;
-			}
 			}
 			continue;		// 즉시 다음 작업 꺼내기
 		}
@@ -1087,6 +1081,28 @@ void worker_thread(HANDLE h_iocp)
 			}
 			delete ex_over;
 			break;
+		}
+		case OP_NPC_RESURRECTION: {
+			clients[key].in_use_ = true;
+			clients[key].level_*= 2;
+			clients[key].hp_ = clients[key].level_*50;
+			clients[key].damage_ = clients[key].level_*2;
+			clients[key].prev_sector_ = clients[key].x_ / SECTOR_SIZE + clients[key].y_ / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
+			clients[key].now_sector_ = clients[key].prev_sector_;
+			int my_sector = clients[key].now_sector_;
+			Sector[key] = my_sector;
+			for (auto& pl : Sector) {
+				if (clients[pl.first].in_use_ == false) continue;
+				if (!in_near_sector(my_sector, pl.second)) continue;
+				{
+					lock_guard<mutex> ll(clients[pl.first].s_lock_);
+					if (ST_INGAME != clients[pl.first].state_) continue;
+				}
+				if (clients[pl.first].id_ == key) continue;
+				if (false == can_see(key, pl.first))
+					continue;
+				if (is_pc(pl.first)) clients[pl.first].send_add_object_packet(key);
+			}
 		}
 		}
 	}

@@ -27,7 +27,7 @@ const static int MAX_BUFF_SIZE = 255;
 
 #pragma comment (lib, "ws2_32.lib")
 
-#include "protocol.h"
+#include "..\..\Server\protocol.h"
 
 HANDLE g_hiocp;
 
@@ -108,8 +108,9 @@ void DisconnectClient(int ci)
 
 void SendPacket(int cl, void* packet)
 {
-	int psize = reinterpret_cast<unsigned char*>(packet)[0];
-	int ptype = reinterpret_cast<unsigned char*>(packet)[1];
+	unsigned short* shortPtr = reinterpret_cast<unsigned short*>(packet);
+	int psize = *shortPtr;
+	int ptype = reinterpret_cast<unsigned char*>(packet)[2];
 	OverlappedEx* over = new OverlappedEx;
 	over->event_type = OP_SEND;
 	memcpy(over->IOCP_buf, packet, psize);
@@ -128,9 +129,9 @@ void SendPacket(int cl, void* packet)
 
 void ProcessPacket(int ci, unsigned char packet[])
 {
-	switch (packet[1]) {
-	case SC_MOVE_PLAYER: {
-		SC_MOVE_PLAYER_PACKET* move_packet = reinterpret_cast<SC_MOVE_PLAYER_PACKET*>(packet);
+	switch (packet[2]) {
+	case SC_MOVE_OBJECT: {
+		SC_MOVE_OBJECT_PACKET* move_packet = reinterpret_cast<SC_MOVE_OBJECT_PACKET*>(packet);
 		if (move_packet->id < MAX_CLIENTS) {
 			int my_id = client_map[move_packet->id];
 			if (-1 != my_id) {
@@ -148,8 +149,8 @@ void ProcessPacket(int ci, unsigned char packet[])
 		}
 	}
 					   break;
-	case SC_ADD_PLAYER: break;
-	case SC_REMOVE_PLAYER: break;
+	case SC_ADD_OBJECT: break;
+	case SC_REMOVE_OBJECT: break;
 	case SC_LOGIN_INFO:
 	{
 		g_clients[ci].connected = true;
@@ -202,7 +203,7 @@ void Worker_Thread()
 			unsigned psize = g_clients[ci].curr_packet_size;
 			unsigned pr_size = g_clients[ci].prev_packet_data;
 			while (io_size > 0) {
-				if (0 == psize) psize = buf[0];
+				if (0 == psize) psize = *reinterpret_cast<short*>(buf);
 				if (io_size + pr_size >= psize) {
 					// 지금 패킷 완성 가능
 					unsigned char packet[MAX_PACKET_SIZE];
