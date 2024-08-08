@@ -5,6 +5,7 @@
 #include <thread>
 #include <vector>
 #include <mutex>
+#include <concurrent_unordered_set.h>
 #include <unordered_set>
 #include <concurrent_unordered_map.h>
 #include <fstream>
@@ -12,11 +13,8 @@
 #include <string>
 #include "protocol.h"
 
-#include "include/lua.hpp"
-
 #pragma comment(lib, "WS2_32.lib")
 #pragma comment(lib, "MSWSock.lib")
-#pragma comment(lib, "lua54.lib")
 
 using namespace std;
 constexpr int map_count = 24;
@@ -32,7 +30,7 @@ constexpr int PRIST_STAT_ATK = 5;
 constexpr int PRIST_STAT_ARMOR = 5;
 
 constexpr int SECTOR_SIZE = 20;
-concurrency::concurrent_unordered_map<int, int > Sector;
+concurrency::concurrent_unordered_map<int, concurrency::concurrent_unordered_set<int>> Sector;
 
 enum EVENT_TYPE { EV_RANDOM_MOVE, EV_RESURRECTION, EV_ATTACK};
 struct TIMER_EVENT {
@@ -137,7 +135,6 @@ public:
 	int		max_exp_;
 	int		level_;
 	mutex	ll_;
-	lua_State* L_;
 	int		prev_sector_;
 	int		now_sector_;
 	bool	in_use_;
@@ -496,7 +493,8 @@ void process_packet(int c_id, char* packet)
 		clients[c_id].prev_sector_ = clients[c_id].x_ / SECTOR_SIZE + clients[c_id].y_ / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
 		clients[c_id].now_sector_ = clients[c_id].prev_sector_;
 		int my_sector = clients[c_id].now_sector_;
-		Sector[c_id]= my_sector;
+		Sector[my_sector].insert(c_id);
+		for()
 		for (auto& pl : Sector) {
 			if (clients[pl.first].in_use_ == false) continue;
 			if (!in_near_sector(my_sector, pl.second)) continue;
@@ -701,38 +699,6 @@ void process_packet(int c_id, char* packet)
 	}
 }
 
-int API_get_x(lua_State* L)
-{
-	int user_id =
-		(int)lua_tointeger(L, -1);
-	lua_pop(L, 2);
-	int x = clients[user_id].x_;
-	lua_pushnumber(L, x);
-	return 1;
-}
-
-int API_get_y(lua_State* L)
-{
-	int user_id =
-		(int)lua_tointeger(L, -1);
-	lua_pop(L, 2);
-	int y = clients[user_id].y_;
-	lua_pushnumber(L, y);
-	return 1;
-}
-
-int API_SendMessage(lua_State* L)
-{
-	int my_id = (int)lua_tointeger(L, -3);
-	int user_id = (int)lua_tointeger(L, -2);
-	char* mess = (char*)lua_tostring(L, -1);
-
-	lua_pop(L, 4);
-
-	clients[user_id].send_chat_packet(my_id, mess);
-	return 0;
-}
-
 void InitializeNPC()
 {
 	for (int i = MAX_USER; i < MAX_USER + MAX_NPC; ++i) {
@@ -747,7 +713,7 @@ void InitializeNPC()
 		clients[i].y_ = y;
 		clients[i].prev_sector_ = clients[i].x_ / SECTOR_SIZE + clients[i].y_ / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
 		clients[i].now_sector_ = clients[i].prev_sector_;
-		Sector.insert({ i, clients[i].now_sector_ });
+		Sector[clients[i].now_sector_].insert(i);
 		clients[i].id_ = i;
 		clients[i].state_ = ST_INGAME;
 		if (rand() % 20 == 1) {
@@ -775,20 +741,6 @@ void InitializeNPC()
 			clients[i].damage_ = level * 2;
 			clients[i].hp_ = level * 50;
 		}
-
-		auto L = clients[i].L_ = luaL_newstate();
-		luaL_openlibs(L);
-		luaL_loadfile(L, "npc.lua");
-		lua_pcall(L, 0, 0, 0);
-
-		lua_getglobal(L, "set_uid");
-		lua_pushnumber(L, i);
-		lua_pcall(L, 1, 0, 0);
-		// lua_pop(L, 1);// eliminate set_uid from stack after call
-
-		lua_register(L, "API_SendMessage", API_SendMessage);
-		lua_register(L, "API_get_x", API_get_x);
-		lua_register(L, "API_get_y", API_get_y); 
 	}
 }
 
