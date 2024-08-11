@@ -31,6 +31,7 @@ constexpr int PRIST_STAT_ARMOR = 5;
 
 constexpr int SECTOR_SIZE = 20;
 concurrency::concurrent_unordered_map<int, concurrency::concurrent_unordered_set<int>> Sector;
+mutex SectorMutex;
 
 enum EVENT_TYPE { EV_RANDOM_MOVE, EV_RESURRECTION, EV_ATTACK};
 struct TIMER_EVENT {
@@ -141,6 +142,8 @@ public:
 	int		dir_;
 	int		damage_;
 	int		armor_;
+	vector<int> view_list_;
+	vector<int> old_view_list_;
 
 
 public:
@@ -252,18 +255,6 @@ HANDLE h_iocp;
 SOCKET g_s_socket, g_c_socket;
 OVER_EXP g_a_over;
 
-bool in_near_sector(int my_sector,int targer_sector) {
-	if (my_sector +99 == targer_sector)return true;
-	if (my_sector +100 == targer_sector)return true;
-	if (my_sector +101 == targer_sector)return true;
-	if (my_sector - 1 == targer_sector)return true;
-	if (my_sector == targer_sector) return true;
-	if (my_sector + 1 == targer_sector)return true;
-	if (my_sector -101 == targer_sector)return true;
-	if (my_sector -100 == targer_sector)return true;
-	if (my_sector - 99 == targer_sector)return true;
-	return false;
-}
 enum ATTACK_TYPE { AUTO, SKILL1, SKILL2 };
 
 bool in_my_attack_range(int target, int player, int visual, ATTACK_TYPE attack_type, int dir) {
@@ -494,13 +485,13 @@ void process_packet(int c_id, char* packet)
 		clients[c_id].now_sector_ = clients[c_id].prev_sector_;
 		int my_sector = clients[c_id].now_sector_;
 		Sector[my_sector].insert(c_id);
-		for()
-		for (auto& pl : Sector) {
-			if (clients[pl.first].in_use_ == false) continue;
-			if (!in_near_sector(my_sector, pl.second)) continue;
+		SectorMutex.lock();
+
+		for (auto& pl : Sector[my_sector]) {
+			if (clients[pl].in_use_ == false) continue;
 			{
-				lock_guard<mutex> ll(clients[pl.first].s_lock_);
-				if (ST_INGAME != clients[pl.first].state_) continue;
+				lock_guard<mutex> ll(clients[pl].s_lock_);
+				if (ST_INGAME != clients[pl].state_) continue;
 			}
 			if (clients[pl.first].id_ == c_id) continue;
 			if (false == can_see(c_id, pl.first))
@@ -509,6 +500,7 @@ void process_packet(int c_id, char* packet)
 			else WakeUpNPC(pl.first, c_id);
 			clients[c_id].send_add_object_packet(pl.first);
 		}
+		SectorMutex.unlock();
 		break;
 	}
 	case CS_MOVE: {
