@@ -4,6 +4,7 @@
 #include <MSWSock.h>
 #include <thread>
 #include <vector>
+#include <set>
 #include <mutex>
 #include <concurrent_unordered_set.h>
 #include <unordered_set>
@@ -32,7 +33,6 @@ constexpr int PRIST_STAT_ARMOR = 5;
 constexpr int SECTOR_SIZE = 20;
 concurrency::concurrent_unordered_map<int, concurrency::concurrent_unordered_set<int>> Sector;
 mutex SectorMutex;
-
 enum EVENT_TYPE { EV_RANDOM_MOVE, EV_RESURRECTION, EV_ATTACK};
 struct TIMER_EVENT {
 	int obj_id;
@@ -125,7 +125,6 @@ public:
 	short	x_, y_;
 	short	first_x_,first_y_;
 	char	name_[NAME_SIZE];
-	unordered_set <int> view_list_;
 	mutex	vl_;
 	int		prev_remain_;
 	unsigned int		last_move_time_;
@@ -138,12 +137,13 @@ public:
 	mutex	ll_;
 	int		prev_sector_;
 	int		now_sector_;
+	set<int> near_sectors;
 	bool	in_use_;
 	int		dir_;
 	int		damage_;
 	int		armor_;
-	vector<int> view_list_;
-	vector<int> old_view_list_;
+	unordered_set<int> view_list_;
+	unordered_set<int> old_view_list_;
 
 
 public:
@@ -389,6 +389,14 @@ bool can_see_d(int from, int to, int* distance)
 	return false;
 	
 }
+void get_near_sector(int c_id, int my_sector) {
+	int x, y;
+	x = my_sector% SECTOR_SIZE;
+	y = my_sector / SECTOR_SIZE;
+	if (x != 0) {
+		clients[c_id].near_sectors.insert(my_sector)
+	}
+}
 
 
 void SESSION::send_move_packet(int c_id)
@@ -485,20 +493,21 @@ void process_packet(int c_id, char* packet)
 		clients[c_id].now_sector_ = clients[c_id].prev_sector_;
 		int my_sector = clients[c_id].now_sector_;
 		Sector[my_sector].insert(c_id);
+		clients[c_id].near_sectors.clear();
+		get_near_sector(c_id, my_sector);
 		SectorMutex.lock();
-
 		for (auto& pl : Sector[my_sector]) {
 			if (clients[pl].in_use_ == false) continue;
 			{
 				lock_guard<mutex> ll(clients[pl].s_lock_);
 				if (ST_INGAME != clients[pl].state_) continue;
 			}
-			if (clients[pl.first].id_ == c_id) continue;
-			if (false == can_see(c_id, pl.first))
+			if (clients[pl].id_ == c_id) continue;
+			if (false == can_see(c_id, pl))
 				continue;
-			if (is_pc(pl.first)) clients[pl.first].send_add_object_packet(c_id);
-			else WakeUpNPC(pl.first, c_id);
-			clients[c_id].send_add_object_packet(pl.first);
+			if (is_pc(pl)) clients[pl].send_add_object_packet(c_id);
+			else WakeUpNPC(pl, c_id);
+			clients[c_id].send_add_object_packet(pl);
 		}
 		SectorMutex.unlock();
 		break;
@@ -512,7 +521,8 @@ void process_packet(int c_id, char* packet)
 		clients[c_id].prev_sector_ = clients[c_id].now_sector_;
 		clients[c_id].now_sector_ = x / SECTOR_SIZE + y / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
 		if (clients[c_id].prev_sector_ != clients[c_id].now_sector_) {
-			Sector[c_id] =  clients[c_id].now_sector_;
+			Sector[clients[c_id].prev_sector_].unsafe_erase(c_id);
+			Sector[clients[c_id].now_sector_].insert(c_id);
 		}
 		int my_sector = clients[c_id].now_sector_;
 		switch (p->direction) {
@@ -549,13 +559,12 @@ void process_packet(int c_id, char* packet)
 		unordered_set<int> old_vlist = clients[c_id].view_list_;
 		clients[c_id].vl_.unlock();
 
-		for (auto& cl : Sector) {
-			if (clients[cl.first].in_use_ == false) continue;
-			if (!in_near_sector(my_sector,cl.second)) continue;
-			if (clients[cl.first].state_ != ST_INGAME) continue;
-			if (clients[cl.first].id_ == c_id) continue;
-			if (can_see(c_id, clients[cl.first].id_))
-				near_list.insert(clients[cl.first].id_);
+		for (auto& cl : Sector[clients[c_id].now_sector_]) {
+			if (clients[cl].in_use_ == false) continue;
+			if (clients[cl].state_ != ST_INGAME) continue;
+			if (clients[cl].id_ == c_id) continue;
+			if (can_see(c_id, clients[cl].id_))
+				near_list.insert(clients[cl].id_);
 		}
 
 		clients[c_id].send_move_packet(c_id);
@@ -641,11 +650,6 @@ void process_packet(int c_id, char* packet)
 			}
 			for (auto& ppl : Sector) {
 				if (clients[ppl.first].in_use_ == false) continue;
-				if (!in_near_sector(my_sector, ppl.second)) continue;
-				{
-					lock_guard<mutex> ll(clients[ppl.first].s_lock_);
-					if (ST_INGAME != clients[ppl.first].state_) continue;
-				}
 				if (!is_pc(ppl.first)) continue;
 				if (clients[pl].hp_ <= 0) {
 					clients[ppl.first].send_remove_player_packet(clients[pl].id_);
@@ -672,14 +676,9 @@ void process_packet(int c_id, char* packet)
 		clients[c_id].prev_sector_ = clients[c_id].x_ / SECTOR_SIZE + clients[c_id].y_ / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
 		clients[c_id].now_sector_ = clients[c_id].prev_sector_;
 		int my_sector = clients[c_id].now_sector_;
-		Sector[c_id] = my_sector;
+		Sector[clients[c_id].now_sector_].insert(c_id);
 		for (auto& pl : Sector) {
 			if (clients[pl.first].in_use_ == false) continue;
-			if (!in_near_sector(my_sector, pl.second)) continue;
-			{
-				lock_guard<mutex> ll(clients[pl.first].s_lock_);
-				if (ST_INGAME != clients[pl.first].state_) continue;
-			}
 			if (clients[pl.first].id_ == c_id) continue;
 			if (false == can_see(c_id, pl.first))
 				continue;
@@ -794,14 +793,13 @@ void do_npc_random_move(int npc_id)
 	if (clients[npc_id].in_use_ == false)
 		return;
 	SESSION& npc = clients[npc_id];
-	int my_sector = Sector[npc_id];
+	int my_sector = clients[npc_id].now_sector_;
 	unordered_set<int> old_vl;
 	int distance;
 	int min_distance = 5;
 	int nearest = -1;
 	for (auto& obj : Sector) {
 		if (clients[obj.first].in_use_ == false) continue;
-		if (!in_near_sector(my_sector,obj.second)) continue;
 		if (ST_INGAME != clients[obj.first].state_) continue;
 		if (true == is_npc(obj.first)) continue;
 		if (true == can_see_d(npc.id_, obj.first, &distance)) {
@@ -895,13 +893,13 @@ void do_npc_random_move(int npc_id)
 	clients[npc_id].prev_sector_ = clients[npc_id].now_sector_;
 	clients[npc_id].now_sector_ = x / SECTOR_SIZE + y / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
 	if (clients[npc_id].prev_sector_ != clients[npc_id].now_sector_) {
-		Sector[npc_id] =  clients[npc_id].now_sector_;
+		Sector[clients[npc_id].now_sector_].insert(npc_id);
+		Sector[clients[npc_id].prev_sector_].unsafe_erase(npc_id);
 	}
 	my_sector = clients[npc_id].now_sector_;
 	unordered_set<int> new_vl;
 	for (auto& obj : Sector) {
 		if (clients[obj.first].in_use_ == false) continue;
-		if (!in_near_sector(my_sector,obj.second)) continue;
 		if (ST_INGAME != clients[obj.first].state_) continue;
 		if (true == is_npc(obj.first)) continue;
 		if (true == can_see(npc.id_, obj.first))
@@ -1038,14 +1036,9 @@ void worker_thread(HANDLE h_iocp)
 			clients[key].prev_sector_ = clients[key].x_ / SECTOR_SIZE + clients[key].y_ / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
 			clients[key].now_sector_ = clients[key].prev_sector_;
 			int my_sector = clients[key].now_sector_;
-			Sector[key] = my_sector;
+			Sector[my_sector].insert(my_sector);
 			for (auto& pl : Sector) {
 				if (clients[pl.first].in_use_ == false) continue;
-				if (!in_near_sector(my_sector, pl.second)) continue;
-				{
-					lock_guard<mutex> ll(clients[pl.first].s_lock_);
-					if (ST_INGAME != clients[pl.first].state_) continue;
-				}
 				if (clients[pl.first].id_ == key) continue;
 				if (false == can_see(key, pl.first))
 					continue;
