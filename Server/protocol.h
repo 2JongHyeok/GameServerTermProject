@@ -8,6 +8,8 @@ constexpr int MAX_NPC = 10000;
 
 constexpr int MAP_COUNT = 24;
 
+constexpr int W_WIDTH = 2000;
+constexpr int W_HEIGHT = 2000;
 // Packet ID
 constexpr char CS_LOGIN = 0;
 constexpr char CS_MOVE = 1;

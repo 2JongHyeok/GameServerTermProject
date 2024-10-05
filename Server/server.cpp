@@ -394,7 +394,7 @@ void get_near_sector(int c_id, int my_sector) {
 	x = my_sector% SECTOR_SIZE;
 	y = my_sector / SECTOR_SIZE;
 	if (x != 0) {
-		clients[c_id].near_sectors.insert(my_sector)
+		clients[c_id].near_sectors.insert(my_sector);
 	}
 }
 

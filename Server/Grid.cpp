@@ -2,7 +2,10 @@
 
 inline Grid::Grid() : cols(W_WIDTH / CELL_SIZE), rows(W_HEIGHT / CELL_SIZE) {
     cells.resize(rows, std::vector<std::unordered_set<int>>(cols));
-    cellMutexes.resize(rows, std::vector<std::shared_mutex>(cols));
+    cellMutexes.reserve(rows);
+    for (int i = 0; i < rows; ++i) {
+        cellMutexes.emplace_back(cols);
+    }
 }
 
 inline void Grid::addObject(const GameObject& obj) {
@@ -41,8 +44,8 @@ inline void Grid::updateObject(const GameObject& oldPos, const GameObject& newPo
     cells[newCellY][newCellX].insert(newPos.id);
 }
 
-inline std::vector<int> Grid::getNearbyObjects(const GameObject& obj) {
-    std::vector<int> nearby;
+inline std::set<int> Grid::getNearbyObjects(const GameObject& obj) {
+    std::set<int> nearby;
     int cellX = obj.x / CELL_SIZE;
     int cellY = obj.y / CELL_SIZE;
 
@@ -52,7 +55,9 @@ inline std::vector<int> Grid::getNearbyObjects(const GameObject& obj) {
             int ny = cellY + dy;
             if (nx >= 0 && nx < cols && ny >= 0 && ny < rows) {
                 std::shared_lock<std::shared_mutex> lock(cellMutexes[ny][nx]);
-                nearby.insert(nearby.end(), cells[ny][nx].begin(), cells[ny][nx].end());
+                for (int p : cells[ny][nx]) {
+                    nearby.insert(p);
+                }
             }
         }
     }
