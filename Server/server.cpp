@@ -13,6 +13,7 @@
 #include <concurrent_priority_queue.h>
 #include <string>
 #include "protocol.h"
+#include "Grid.h"
 
 #pragma comment(lib, "WS2_32.lib")
 #pragma comment(lib, "MSWSock.lib")
