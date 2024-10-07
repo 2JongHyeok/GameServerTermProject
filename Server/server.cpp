@@ -22,6 +22,10 @@ using namespace std;
 constexpr int map_count = 24;
 char my_map[W_HEIGHT][W_WIDTH];
 
+Grid Game;
+Grid Npcs;
+
+
 constexpr int VIEW_RANGE = 7;
 
 constexpr int WARRIOR_STAT_ATK = 10;
@@ -32,7 +36,6 @@ constexpr int PRIST_STAT_ATK = 5;
 constexpr int PRIST_STAT_ARMOR = 5;
 
 constexpr int SECTOR_SIZE = 20;
-concurrency::concurrent_unordered_map<int, concurrency::concurrent_unordered_set<int>> Sector;
 mutex SectorMutex;
 enum EVENT_TYPE { EV_RANDOM_MOVE, EV_RESURRECTION, EV_ATTACK};
 struct TIMER_EVENT {
@@ -48,45 +51,40 @@ struct TIMER_EVENT {
 concurrency::concurrent_priority_queue<TIMER_EVENT> timer_queue;
 
 constexpr int BUF_SIZE = 1024;
-class map_loader {
-public:
-	map_loader() {
-	}
 
-	void Load_Map_info() {
-
-		std::ifstream in{ "mymap.txt" };
-		// 파일 열기 실패 여부 확인
-		if (!in) {
-			std::cerr << "파일을 열지 못했습니다: test1.txt\n";
-			if (in.fail()) {
-				std::cerr << "오류: 파일을 찾을 수 없습니다 또는 파일을 열 수 없습니다.\n";
-			}
-			else {
-				std::cerr << "알 수 없는 오류가 발생했습니다.\n";
-			}
-
+void Load_Map_info() {
+	std::ifstream in{ "mymap.txt" };
+	// 파일 열기 실패 여부 확인
+	if (!in) {
+		std::cerr << "파일을 열지 못했습니다: test1.txt\n";
+		if (in.fail()) {
+			std::cerr << "오류: 파일을 찾을 수 없습니다 또는 파일을 열 수 없습니다.\n";
 		}
-		int index_x = 0;
-		int index_y = 0;
-		char temp;
-		string sinteger = "";
-		int count = 0;
-		while (in >> temp) {
-			if (temp == ',') {
-				int integer = stoi(sinteger);
-				my_map[index_y][index_x++] = integer;
-				sinteger = "";
-				if (index_x == 2000) {
-					index_y++;
-					index_x = 0;
-				}
-				continue;
-			}
-			sinteger += temp;
+		else {
+			std::cerr << "알 수 없는 오류가 발생했습니다.\n";
 		}
+
 	}
-};
+	int index_x = 0;
+	int index_y = 0;
+	char temp;
+	string sinteger = "";
+	int count = 0;
+	while (in >> temp) {
+		if (temp == ',') {
+			int integer = stoi(sinteger);
+			my_map[index_y][index_x++] = integer;
+			sinteger = "";
+			if (index_x == 2000) {
+				index_y++;
+				index_x = 0;
+			}
+			continue;
+		}
+		sinteger += temp;
+	}
+}
+
 
 enum COMP_TYPE { OP_ACCEPT, OP_RECV, OP_SEND, OP_NPC_MOVE,  OP_NPC_RESURRECTION, OP_NPC_ATTACK};
 class OVER_EXP {
@@ -701,11 +699,10 @@ void InitializeNPC()
 			if (my_map[y][x] == 50)
 				break;
 		}
+		GameObject object(x, y, i);
 		clients[i].x_ = x;
 		clients[i].y_ = y;
-		clients[i].prev_sector_ = clients[i].x_ / SECTOR_SIZE + clients[i].y_ / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
-		clients[i].now_sector_ = clients[i].prev_sector_;
-		Sector[clients[i].now_sector_].insert(i);
+		Npcs.addObject(object);
 		clients[i].id_ = i;
 		clients[i].state_ = ST_INGAME;
 		if (rand() % 20 == 1) {
@@ -1053,8 +1050,7 @@ void worker_thread(HANDLE h_iocp)
 int main()
 {
 	printf("맵 정보 준비중\n");
-	map_loader ml;
-	ml.Load_Map_info();
+	Load_Map_info();
 	printf("맵 정보 준비완료\n");
 
 	printf("몬스터 정보 준비중\n");
