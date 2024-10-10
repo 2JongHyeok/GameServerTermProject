@@ -1,7 +1,5 @@
 #include <iostream>
 #include <array>
-#include <WS2tcpip.h>
-#include <MSWSock.h>
 #include <thread>
 #include <vector>
 #include <set>
@@ -14,26 +12,18 @@
 #include <string>
 #include "protocol.h"
 #include "Grid.h"
+#include "SESSION.h"
 
-#pragma comment(lib, "WS2_32.lib")
-#pragma comment(lib, "MSWSock.lib")
 
 using namespace std;
 constexpr int map_count = 24;
-char my_map[W_HEIGHT][W_WIDTH];
 
-Grid Game;
+char my_map[W_HEIGHT][W_WIDTH];
+Grid PlayerSector;
 Grid Npcs;
 
 
 constexpr int VIEW_RANGE = 7;
-
-constexpr int WARRIOR_STAT_ATK = 10;
-constexpr int WARRIOR_STAT_ARMOR = 10;
-constexpr int MAGE_STAT_ATK = 20;
-constexpr int MAGE_STAT_ARMOR = 1;
-constexpr int PRIST_STAT_ATK = 5;
-constexpr int PRIST_STAT_ARMOR = 5;
 
 constexpr int SECTOR_SIZE = 20;
 mutex SectorMutex;
@@ -49,8 +39,6 @@ struct TIMER_EVENT {
 	}
 };
 concurrency::concurrent_priority_queue<TIMER_EVENT> timer_queue;
-
-constexpr int BUF_SIZE = 1024;
 
 void Load_Map_info() {
 	std::ifstream in{ "mymap.txt" };
@@ -85,171 +73,6 @@ void Load_Map_info() {
 	}
 }
 
-
-enum COMP_TYPE { OP_ACCEPT, OP_RECV, OP_SEND, OP_NPC_MOVE,  OP_NPC_RESURRECTION, OP_NPC_ATTACK};
-class OVER_EXP {
-public:
-	WSAOVERLAPPED over_;
-	WSABUF wsabuf_;
-	char send_buf_[BUF_SIZE];
-	COMP_TYPE comp_type_;
-	int ai_target_obj_;
-	OVER_EXP()
-	{
-		wsabuf_.len = BUF_SIZE;
-		wsabuf_.buf = send_buf_;
-		comp_type_ = OP_RECV;
-		ZeroMemory(&over_, sizeof(over_));
-	}
-	OVER_EXP(char* packet)
-	{
-		wsabuf_.len = packet[0];
-		wsabuf_.buf = send_buf_;
-		ZeroMemory(&over_, sizeof(over_));
-		comp_type_ = OP_SEND;
-		memcpy(send_buf_, packet, packet[0]);
-	}
-};
-
-enum S_STATE { ST_FREE, ST_ALLOC, ST_INGAME };
-class SESSION {
-	OVER_EXP recv_over_;
-
-public:
-	mutex s_lock_;
-	S_STATE state_;
-	atomic_bool	is_active_;		
-	int id_;
-	SOCKET socket_;
-	short	x_, y_;
-	short	first_x_,first_y_;
-	char	name_[NAME_SIZE];
-	mutex	vl_;
-	int		prev_remain_;
-	unsigned int		last_move_time_;
-	int		visual_;
-	int		hp_;
-	int		max_hp_;
-	int		exp_;
-	int		max_exp_;
-	int		level_;
-	mutex	ll_;
-	int		prev_sector_;
-	int		now_sector_;
-	set<int> near_sectors;
-	bool	in_use_;
-	int		dir_;
-	int		damage_;
-	int		armor_;
-	unordered_set<int> view_list_;
-	unordered_set<int> old_view_list_;
-
-
-public:
-	SESSION()
-	{
-		id_ = -1;
-		socket_ = 0;
-		x_ = y_ = 0;
-		name_[0] = 0;
-		state_ = ST_FREE;
-		prev_remain_ = 0;
-		in_use_ = true;
-		level_ = 1;
-		max_hp_ = 100;
-		hp_ = max_hp_; 
-		max_exp_ = 100;
-	}
-
-	~SESSION() {}
-
-	void do_recv()
-	{
-		DWORD recv_flag = 0;
-		memset(&recv_over_.over_, 0, sizeof(recv_over_.over_));
-		recv_over_.wsabuf_.len = BUF_SIZE - prev_remain_;
-		recv_over_.wsabuf_.buf = recv_over_.send_buf_ + prev_remain_;
-		WSARecv(socket_, &recv_over_.wsabuf_, 1, 0, &recv_flag,
-			&recv_over_.over_, 0);
-	}
-
-	void do_send(void* packet)
-	{
-		OVER_EXP* sdata = new OVER_EXP{ reinterpret_cast<char*>(packet) };
-		WSASend(socket_, &sdata->wsabuf_, 1, 0, 0, &sdata->over_, 0);
-	}
-	void send_login_info_packet()
-	{
-		SC_LOGIN_INFO_PACKET p;
-		p.size = sizeof(SC_LOGIN_INFO_PACKET);
-		p.type = SC_LOGIN_INFO;
-		p.visual = visual_;
-		p.id = id_;
-		p.hp = hp_;
-		p.max_hp = max_hp_;
-		p.exp = exp_;
-		p.level = level_;
-		p.x = x_;
-		p.y = y_;
-		do_send(&p);
-	}
-	void send_get_damage_packet(int c_id, int damage, int hp) {
-
-		SC_GET_DAMAGE_PACKET p;
-		p.size = sizeof(SC_GET_DAMAGE_PACKET);
-		p.type = SC_GET_DAMAGE;
-		p.id = c_id;
-		p.got_damage = damage;
-		p.hp = hp;
-		do_send(&p);
-	}
-	void send_move_packet(int c_id);
-	void send_add_object_packet(int c_id);
-	void send_remove_player_packet(int c_id)
-	{
-		vl_.lock();
-		if (view_list_.count(c_id))
-			view_list_.erase(c_id);
-		else {
-			vl_.unlock();
-			return;
-		}
-		vl_.unlock();
-		SC_REMOVE_OBJECT_PACKET p;
-		p.size = sizeof(p);
-		p.type = SC_REMOVE_OBJECT;
-		p.id = c_id;
-		do_send(&p);
-	}
-	void send_chat_packet(int p_id, const char* mess);
-	void send_stat_change_packet(int c_id, int max_hp,  int hp, int level, int exp) {
-		SC_STAT_CHANGE_PACKET p;
-		p.size = sizeof(p);
-		p.type = SC_STAT_CHANGE;
-		p.id = c_id;
-		p.max_hp = max_hp;
-		p.level = level;
-		p.exp = exp;
-		p.hp = hp;
-		do_send(&p);
-	}
-	void update_status() {
-		hp_ = 100;
-		if (visual_ == 0) {
-			damage_ = level_ * WARRIOR_STAT_ATK;
-			armor_ = level_ * WARRIOR_STAT_ARMOR;
-		}
-		else if (visual_ == 1) {
-			damage_ = level_ * MAGE_STAT_ATK;
-			armor_ = level_ * MAGE_STAT_ARMOR;
-		}
-		else if (visual_ == 2) {
-			damage_ = level_ * PRIST_STAT_ATK;
-			armor_ = level_ * PRIST_STAT_ARMOR;
-		}
-	}
-};
-array<SESSION, MAX_USER+MAX_NPC> clients;
 HANDLE h_iocp;
 SOCKET g_s_socket, g_c_socket;
 OVER_EXP g_a_over;
@@ -397,45 +220,6 @@ void get_near_sector(int c_id, int my_sector) {
 	}
 }
 
-
-void SESSION::send_move_packet(int c_id)
-{
-	SC_MOVE_OBJECT_PACKET p;
-	p.size = sizeof(SC_MOVE_OBJECT_PACKET);
-	p.type = SC_MOVE_OBJECT;
-	p.id = c_id;
-	p.x = clients[c_id].x_;
-	p.y = clients[c_id].y_;
-	p.move_time = clients[c_id].last_move_time_;
-	do_send(&p);
-}
-
-void SESSION::send_add_object_packet(int c_id)
-{
-	SC_ADD_OBJECT_PACKET add_packet;
-	add_packet.size = sizeof(SC_ADD_OBJECT_PACKET);
-	add_packet.type = SC_ADD_OBJECT;
-	add_packet.id = c_id;
-	add_packet.hp = clients[c_id].hp_;
-	add_packet.visual = clients[c_id].visual_;
-	strcpy_s(add_packet.name, clients[c_id].name_);
-	add_packet.x = clients[c_id].x_;
-	add_packet.y = clients[c_id].y_;
-	vl_.lock();
-	view_list_.insert(c_id);
-	vl_.unlock();
-	do_send(&add_packet);
-}
-
-void SESSION::send_chat_packet(int p_id, const char* mess)
-{
-	SC_CHAT_PACKET packet;
-	packet.id = p_id;
-	packet.size = sizeof(packet);
-	packet.type = SC_CHAT;
-	strcpy_s(packet.mess, mess);
-	do_send(&packet);
-}
 
 int get_new_client_id()
 {
