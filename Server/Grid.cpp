@@ -44,8 +44,8 @@ inline void Grid::updateObject(const GameObject& oldPos, const GameObject& newPo
     cells[newCellY][newCellX].insert(newPos.id);
 }
 
-inline std::set<int> Grid::getNearbyObjects(const GameObject& obj) {
-    std::set<int> nearby;
+inline std::unordered_set<int> Grid::getNearbyObjects(const GameObject& obj) {
+    std::unordered_set<int> nearby;
     int cellX = obj.x / CELL_SIZE;
     int cellY = obj.y / CELL_SIZE;
 

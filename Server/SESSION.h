@@ -18,13 +18,12 @@ public:
 	std::atomic_bool	is_active_;
 	int id_;
 	SOCKET socket_;
-	short	x_, y_;
-	short	first_x_, first_y_;
+	GameObject pos_;
 	char	name_[NAME_SIZE];
 	std::mutex	vl_;
 	int		prev_remain_;
 	unsigned int		last_move_time_;
-	int		visual_;
+	int		character_;
 	int		hp_;
 	int		max_hp_;
 	int		exp_;

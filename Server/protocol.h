@@ -3,8 +3,8 @@ constexpr int PORT_NUM = 4000;
 constexpr int NAME_SIZE = 20;
 constexpr int CHAT_SIZE = 300;
 
-constexpr int MAX_USER = 10000;
-constexpr int MAX_NPC = 10000;
+constexpr int MAX_USER = 100'000;
+constexpr int MAX_NPC = 100'000;
 
 constexpr int MAP_COUNT = 24;
 
@@ -77,7 +77,7 @@ struct CS_ATTACK_PACKET {
 struct SC_LOGIN_INFO_PACKET {
 	unsigned short size;
 	char	type;
-	int		visual;				// 0 : 전사, 1 : 마법사, 2 : 사제
+	int		character;				// 0 : 전사, 1 : 마법사, 2 : 사제
 	int		id;
 	int		hp;
 	int		max_hp;
@@ -90,7 +90,7 @@ struct SC_ADD_OBJECT_PACKET {
 	unsigned short size;
 	char	type;
 	int		id;
-	int		visual;		// 0 : 플레이어,  1 : NPC
+	int		character;		// 0 : 플레이어,  1 : NPC
 	short	x, y;
 	int		hp;
 	char	name[NAME_SIZE];

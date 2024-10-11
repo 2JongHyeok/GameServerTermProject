@@ -211,14 +211,6 @@ bool can_see_d(int from, int to, int* distance)
 	return false;
 	
 }
-void get_near_sector(int c_id, int my_sector) {
-	int x, y;
-	x = my_sector% SECTOR_SIZE;
-	y = my_sector / SECTOR_SIZE;
-	if (x != 0) {
-		clients[c_id].near_sectors.insert(my_sector);
-	}
-}
 
 
 int get_new_client_id()
@@ -250,35 +242,31 @@ void process_packet(int c_id, char* packet)
 		strcpy_s(clients[c_id].name_, p->name);
 		{
 			lock_guard<mutex> ll{ clients[c_id].s_lock_};
-			clients[c_id].x_ = rand() % W_WIDTH;
-			clients[c_id].y_ = rand() % W_HEIGHT;
-			clients[c_id].first_x_ = clients[c_id].x_;
-			clients[c_id].first_y_ = clients[c_id].y_;
+			clients[c_id].pos_.x = rand() % W_WIDTH;
+			clients[c_id].pos_.y = rand() % W_HEIGHT;
+			clients[c_id].pos_.id = c_id;
+			
 			clients[c_id].level_ = 1;
-			int visual = rand() % 3;
-			clients[c_id].visual_ = visual;
-			if (visual == 0) {
+			int character = rand() % 3;
+			clients[c_id].character_ = character;
+			if (character == 0) {
 				clients[c_id].damage_ = WARRIOR_STAT_ATK * clients[c_id].level_;
 				clients[c_id].armor_ = WARRIOR_STAT_ARMOR * clients[c_id].level_;
 			}
-			else if (visual == 1) {
+			else if (character == 1) {
 				clients[c_id].damage_ = MAGE_STAT_ATK * clients[c_id].level_;
 				clients[c_id].armor_ = MAGE_STAT_ARMOR * clients[c_id].level_;
 			}
-			else if (visual == 2) {
+			else if (character == 2) {
 				clients[c_id].damage_ = PRIST_STAT_ATK * clients[c_id].level_;
 				clients[c_id].armor_ = PRIST_STAT_ARMOR * clients[c_id].level_;
 			}
 			clients[c_id].state_ = ST_INGAME;
 		}
 		clients[c_id].send_login_info_packet();
-		clients[c_id].prev_sector_ = clients[c_id].x_ / SECTOR_SIZE + clients[c_id].y_ / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
-		clients[c_id].now_sector_ = clients[c_id].prev_sector_;
-		int my_sector = clients[c_id].now_sector_;
-		Sector[my_sector].insert(c_id);
+		PlayerSector.addObject(clients[c_id].pos_);
 		clients[c_id].near_sectors.clear();
-		get_near_sector(c_id, my_sector);
-		SectorMutex.lock();
+
 		for (auto& pl : Sector[my_sector]) {
 			if (clients[pl].in_use_ == false) continue;
 			{
@@ -381,7 +369,7 @@ void process_packet(int c_id, char* packet)
 		break;
 	}
 	case CS_ATTACK: {
-		int visual = clients[c_id].visual_;
+		int visual = clients[c_id].character_;
 		int dir = clients[c_id].dir_;
 		clients[c_id].vl_.lock();
 		unordered_set<int> old_vlist = clients[c_id].view_list_;

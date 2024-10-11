@@ -22,6 +22,6 @@ public:
     void addObject(const GameObject& obj);
     void removeObject(const GameObject& obj);
     void updateObject(const GameObject& oldPos, const GameObject& newPos);
-    std::set<int> getNearbyObjects(const GameObject& obj);
+    std::unordered_set<int> getNearbyObjects(const GameObject& obj);
 };
 

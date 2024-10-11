@@ -21,7 +21,7 @@ inline void SESSION::send_login_info_packet()
 	SC_LOGIN_INFO_PACKET p;
 	p.size = sizeof(SC_LOGIN_INFO_PACKET);
 	p.type = SC_LOGIN_INFO;
-	p.visual = visual_;
+	p.character = character_;
 	p.id = id_;
 	p.hp = hp_;
 	p.max_hp = max_hp_;
@@ -63,7 +63,7 @@ inline void SESSION::send_get_damage_packet(int c_id, int damage, int hp) {
 	 add_packet.type = SC_ADD_OBJECT;
 	 add_packet.id = c_id;
 	 add_packet.hp = clients[c_id].hp_;
-	 add_packet.visual = clients[c_id].visual_;
+	 add_packet.visual = clients[c_id].character_;
 	 strcpy_s(add_packet.name, clients[c_id].name_);
 	 add_packet.x = clients[c_id].x_;
 	 add_packet.y = clients[c_id].y_;
@@ -114,15 +114,15 @@ inline void SESSION::send_get_damage_packet(int c_id, int damage, int hp) {
 
  inline void SESSION::update_status() {
 	 hp_ = 100;
-	 if (visual_ == 0) {
+	 if (character_ == 0) {
 		 damage_ = level_ * WARRIOR_STAT_ATK;
 		 armor_ = level_ * WARRIOR_STAT_ARMOR;
 	 }
-	 else if (visual_ == 1) {
+	 else if (character_ == 1) {
 		 damage_ = level_ * MAGE_STAT_ATK;
 		 armor_ = level_ * MAGE_STAT_ARMOR;
 	 }
-	 else if (visual_ == 2) {
+	 else if (character_ == 2) {
 		 damage_ = level_ * PRIST_STAT_ATK;
 		 armor_ = level_ * PRIST_STAT_ARMOR;
 	 }
