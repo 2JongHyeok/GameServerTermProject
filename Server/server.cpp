@@ -22,6 +22,7 @@ char my_map[W_HEIGHT][W_WIDTH];
 Grid Sector;
 
 constexpr int VIEW_RANGE = 7;
+constexpr int NPC_VIEW_RANGE = 3;
 
 constexpr int SECTOR_SIZE = 20;
 
@@ -197,10 +198,15 @@ bool can_see(int a, int b)
 	if (std::abs(clients[a].pos_.x_.load() - clients[b].pos_.x_.load()) > VIEW_RANGE) return false;
 	return std::abs(clients[a].pos_.y_.load() - clients[b].pos_.y_.load()) <= VIEW_RANGE;
 }
+bool can_npc_see(int a, int b)
+{
+	if (std::abs(clients[a].pos_.x_.load() - clients[b].pos_.x_.load()) > NPC_VIEW_RANGE) return false;
+	return std::abs(clients[a].pos_.y_.load() - clients[b].pos_.y_.load()) <= NPC_VIEW_RANGE;
+}
 bool can_see_d(int from, int to, int* distance)
 {
-	if (abs(clients[from].pos_.x_ - clients[to].pos_.x_) > VIEW_RANGE) return false;
-	if (abs(clients[from].pos_.y_ - clients[to].pos_.y_) <= VIEW_RANGE) {
+	if (abs(clients[from].pos_.x_ - clients[to].pos_.x_) > NPC_VIEW_RANGE) return false;
+	if (abs(clients[from].pos_.y_ - clients[to].pos_.y_) <= NPC_VIEW_RANGE) {
 		*distance = abs(clients[from].pos_.x_ - clients[to].pos_.x_);
 		if (*distance < abs(clients[from].pos_.y_ - clients[to].pos_.y_))
 			*distance = abs(clients[from].pos_.y_ - clients[to].pos_.y_);
@@ -231,8 +237,6 @@ void WakeUpNPC(int npc_id)
 	timer_queue.push(ev);
 }
 
-int NNNNNN = 1;
-
 void process_packet(int c_id, char* packet)
 {
 	switch (packet[2]) {
@@ -242,11 +246,8 @@ void process_packet(int c_id, char* packet)
 		strcpy_s(clients[c_id].name_, p->name);
 		{
 			lock_guard<mutex> ll{ clients[c_id].s_lock_};
-			//clients[c_id].pos_.x_.store(rand() % W_WIDTH);
-			clients[c_id].pos_.x_.store(NNNNNN);
-			//clients[c_id].pos_.y_.store(rand() % W_HEIGHT);
-			clients[c_id].pos_.y_.store(NNNNNN);
-			NNNNNN += 20;
+			clients[c_id].pos_.x_.store(rand() % W_WIDTH);
+			clients[c_id].pos_.y_.store(rand() % W_HEIGHT);
 			clients[c_id].respawn_x_ = clients[c_id].pos_.x_;
 			clients[c_id].respawn_y_ = clients[c_id].pos_.y_;
 			clients[c_id].pos_.id_ = c_id;
@@ -623,10 +624,11 @@ void do_npc_random_move(int npc_id)
 	int min_distance = 5;
 	int nearest = -1;
 
-	unordered_set<int> vl = Sector.getNearbyObjects(clients[npc_id].pos_);
-	unordered_set<int> new_vl;
+	clients[npc_id].vl_.lock();
+	unordered_set<int> old_vl = clients[npc_id].view_list_;
+	clients[npc_id].vl_.unlock();
 
-	for (int obj : vl) {
+	for (int obj : old_vl) {
 		if (clients[obj].in_use_ == false) continue;
 		if (ST_INGAME != clients[obj].state_) continue;
 		if (true == is_npc(obj)) continue;
@@ -637,8 +639,8 @@ void do_npc_random_move(int npc_id)
 			}
 		}
 	}
+
 	if (min_distance <= 3) {
-		clients[nearest].vl_.lock();
 		int damage = clients[npc_id].damage_ - clients[nearest].armor_;
 		if (damage < 0) damage = 0;
 		if (clients[npc_id].level_ <= 10) {
@@ -668,7 +670,6 @@ void do_npc_random_move(int npc_id)
 		}
 
 		if (clients[nearest].hp_ > 0) {
-			clients[nearest].vl_.unlock();
 			clients[nearest].send_get_damage_packet(npc_id, damage, clients[nearest].hp_);
 		}
 		else {
@@ -677,7 +678,6 @@ void do_npc_random_move(int npc_id)
 			clients[nearest].pos_.x_.store(clients[nearest].respawn_x_);
 			clients[nearest].pos_.y_.store(clients[nearest].respawn_y_);
 			clients[nearest].exp_ /= 2;
-			clients[nearest].vl_.unlock();
 			clients[nearest].send_stat_change_packet(nearest, clients[nearest].max_hp_,
 				clients[nearest].hp_, clients[nearest].level_, clients[nearest].exp_);
 
@@ -766,17 +766,16 @@ void do_npc_random_move(int npc_id)
 		clients[npc_id].pos_.y_.store(y);
 	}
 
+	unordered_set<int> vl = Sector.getNearbyObjects(clients[npc_id].pos_);
+	unordered_set<int> new_vl;
+
 	for (int obj : vl) {
 		if (clients[obj].in_use_ == false) continue;
 		if (ST_INGAME != clients[obj].state_) continue;
 		if (is_npc(obj)) continue;
-		if (can_see(clients[npc_id].id_, obj))
-			new_vl.insert(clients[obj].id_);
+		if (can_npc_see(clients[npc_id].id_, obj))
+			new_vl.insert(obj);
 	}
-
-	clients[npc_id].vl_.lock();
-	unordered_set<int> old_vl = clients[npc_id].view_list_;
-	clients[npc_id].vl_.unlock();
 
 	for (auto pl : new_vl) {
 		if (0 == old_vl.count(pl)) {
@@ -883,7 +882,6 @@ void worker_thread(HANDLE h_iocp)
 			bool keep_alive = false;
 
 			unordered_set<int> vl = Sector.getNearbyObjects(clients[key].pos_);
-			unordered_set<int> new_vl;
 
 			for (int pl : vl) {
 				if (clients[pl].in_use_ == false) continue;
@@ -892,7 +890,7 @@ void worker_thread(HANDLE h_iocp)
 				if (false == can_see(pl, key)) continue;
 				if (!is_pc(pl)) continue;
 				keep_alive = true;
-				new_vl.insert(pl);
+				break;
 			}
 
 			if (true == keep_alive) {
