@@ -27,8 +27,8 @@ inline void SESSION::send_login_info_packet()
 	p.max_hp = max_hp_;
 	p.exp = exp_;
 	p.level = level_;
-	p.x = x_;
-	p.y = y_;
+	p.x = pos_.x_.load();
+	p.y = pos_.y_.load();
 	do_send(&p);
 }
 
@@ -49,8 +49,8 @@ inline void SESSION::send_get_damage_packet(int c_id, int damage, int hp) {
 	 p.size = sizeof(SC_MOVE_OBJECT_PACKET);
 	 p.type = SC_MOVE_OBJECT;
 	 p.id = c_id;
-	 p.x = clients[c_id].x_;
-	 p.y = clients[c_id].y_;
+	 p.x = clients[c_id].pos_.x_;
+	 p.y = clients[c_id].pos_.y_;
 	 p.move_time = clients[c_id].last_move_time_;
 	 do_send(&p);
  }
@@ -63,10 +63,10 @@ inline void SESSION::send_get_damage_packet(int c_id, int damage, int hp) {
 	 add_packet.type = SC_ADD_OBJECT;
 	 add_packet.id = c_id;
 	 add_packet.hp = clients[c_id].hp_;
-	 add_packet.visual = clients[c_id].character_;
+	 add_packet.character = clients[c_id].character_;
 	 strcpy_s(add_packet.name, clients[c_id].name_);
-	 add_packet.x = clients[c_id].x_;
-	 add_packet.y = clients[c_id].y_;
+	 add_packet.x = clients[c_id].pos_.x_;
+	 add_packet.y = clients[c_id].pos_.y_;
 	 vl_.lock();
 	 view_list_.insert(c_id);
 	 vl_.unlock();

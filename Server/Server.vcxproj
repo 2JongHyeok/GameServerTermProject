@@ -131,7 +131,6 @@
   <ItemGroup>
     <ClCompile Include="GameObject.cpp" />
     <ClCompile Include="Grid.cpp" />
-    <ClCompile Include="ObjectManager.cpp" />
     <ClCompile Include="OVER_EXP.cpp" />
     <ClCompile Include="server.cpp" />
     <ClCompile Include="SESSION.cpp" />
@@ -139,7 +138,6 @@
   <ItemGroup>
     <ClInclude Include="GameObject.h" />
     <ClInclude Include="Grid.h" />
-    <ClInclude Include="ObjectManager.h" />
     <ClInclude Include="OVER_EXP.h" />
     <ClInclude Include="protocol.h" />
     <ClInclude Include="SESSION.h" />

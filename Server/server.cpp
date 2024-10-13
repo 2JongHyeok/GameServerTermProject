@@ -19,14 +19,13 @@ using namespace std;
 constexpr int map_count = 24;
 
 char my_map[W_HEIGHT][W_WIDTH];
-Grid PlayerSector;
-Grid Npcs;
+Grid Sector;
 
-
+extern std::array<SESSION, MAX_USER + MAX_NPC> clients;
 constexpr int VIEW_RANGE = 7;
 
 constexpr int SECTOR_SIZE = 20;
-mutex SectorMutex;
+
 enum EVENT_TYPE { EV_RANDOM_MOVE, EV_RESURRECTION, EV_ATTACK};
 struct TIMER_EVENT {
 	int obj_id;
@@ -80,10 +79,10 @@ OVER_EXP g_a_over;
 enum ATTACK_TYPE { AUTO, SKILL1, SKILL2 };
 
 bool in_my_attack_range(int target, int player, int visual, ATTACK_TYPE attack_type, int dir) {
-	int t_x = clients[target].x_;
-	int t_y = clients[target].y_;
-	int p_x = clients[player].x_;
-	int p_y = clients[player].y_;
+	int t_x = clients[target].pos_.x_.load();
+	int t_y = clients[target].pos_.y_.load();
+	int p_x = clients[player].pos_.x_.load();
+	int p_y = clients[player].pos_.y_.load();
 	if (visual == 0) {
 		switch (attack_type)
 		{
@@ -194,18 +193,18 @@ bool is_npc(int object_id)
 	return !is_pc(object_id);
 }
 
-bool can_see(int from, int to)
+bool can_see(int a, int b)
 {
-	if (abs(clients[from].x_ - clients[to].x_) > VIEW_RANGE) return false;
-	return abs(clients[from].y_ - clients[to].y_) <= VIEW_RANGE;
+	if (std::abs(clients[a].pos_.x_.load() - clients[b].pos_.x_.load()) > VIEW_RANGE) return false;
+	return std::abs(clients[a].pos_.y_.load() - clients[b].pos_.y_.load()) <= VIEW_RANGE;
 }
 bool can_see_d(int from, int to, int* distance)
 {
-	if (abs(clients[from].x_ - clients[to].x_) > VIEW_RANGE) return false;
-	if (abs(clients[from].y_ - clients[to].y_) <= VIEW_RANGE) {
-		*distance = abs(clients[from].x_ - clients[to].x_);
-		if (*distance < abs(clients[from].y_ - clients[to].y_))
-			*distance = abs(clients[from].y_ - clients[to].y_);
+	if (abs(clients[from].pos_.x_ - clients[to].pos_.x_) > VIEW_RANGE) return false;
+	if (abs(clients[from].pos_.y_ - clients[to].pos_.y_) <= VIEW_RANGE) {
+		*distance = abs(clients[from].pos_.x_ - clients[to].pos_.x_);
+		if (*distance < abs(clients[from].pos_.y_ - clients[to].pos_.y_))
+			*distance = abs(clients[from].pos_.y_ - clients[to].pos_.y_);
 		return true;
 	}
 	return false;
@@ -223,7 +222,7 @@ int get_new_client_id()
 	return -1;
 }
 
-void WakeUpNPC(int npc_id, int waker)
+void WakeUpNPC(int npc_id)
 {
 	if (clients[npc_id].is_active_) return;
 	bool old_state = false;
@@ -232,6 +231,8 @@ void WakeUpNPC(int npc_id, int waker)
 	TIMER_EVENT ev{ npc_id, chrono::system_clock::now(), EV_RANDOM_MOVE, 0 };
 	timer_queue.push(ev);
 }
+
+
 
 void process_packet(int c_id, char* packet)
 {
@@ -242,9 +243,11 @@ void process_packet(int c_id, char* packet)
 		strcpy_s(clients[c_id].name_, p->name);
 		{
 			lock_guard<mutex> ll{ clients[c_id].s_lock_};
-			clients[c_id].pos_.x = rand() % W_WIDTH;
-			clients[c_id].pos_.y = rand() % W_HEIGHT;
-			clients[c_id].pos_.id = c_id;
+			clients[c_id].pos_.x_.store(rand() % W_WIDTH);
+			clients[c_id].pos_.y_.store(rand() % W_HEIGHT);
+			clients[c_id].respawn_x_ = clients[c_id].pos_.x_;
+			clients[c_id].respawn_y_ = clients[c_id].pos_.y_;
+			clients[c_id].pos_.id_ = c_id;
 			
 			clients[c_id].level_ = 1;
 			int character = rand() % 3;
@@ -264,38 +267,51 @@ void process_packet(int c_id, char* packet)
 			clients[c_id].state_ = ST_INGAME;
 		}
 		clients[c_id].send_login_info_packet();
-		PlayerSector.addObject(clients[c_id].pos_);
-		clients[c_id].near_sectors.clear();
-
-		for (auto& pl : Sector[my_sector]) {
+		Sector.addObject(clients[c_id].pos_);
+		
+		unordered_set <int> vl = Sector.getNearbyObjects(clients[c_id].pos_);
+		unordered_set <int> new_vl;
+		for (auto& pl : vl) {
 			if (clients[pl].in_use_ == false) continue;
-			{
-				lock_guard<mutex> ll(clients[pl].s_lock_);
-				if (ST_INGAME != clients[pl].state_) continue;
-			}
-			if (clients[pl].id_ == c_id) continue;
-			if (false == can_see(c_id, pl))
-				continue;
-			if (is_pc(pl)) clients[pl].send_add_object_packet(c_id);
-			else WakeUpNPC(pl, c_id);
-			clients[c_id].send_add_object_packet(pl);
+			if (pl == c_id) continue;
+			if (clients[pl].state_ != ST_INGAME) continue;
+			if (false == can_see(pl, c_id)) continue;
+			new_vl.insert(pl);
 		}
-		SectorMutex.unlock();
+
+		clients[c_id].vl_.lock();
+		unordered_set<int> old_vlist = clients[c_id].view_list_;
+		clients[c_id].vl_.unlock();
+
+		for (auto pl : new_vl) {
+			auto& cpl = clients[pl];
+			if (is_pc(pl)) {
+				cpl.vl_.lock();
+				if (clients[pl].view_list_.count(c_id)) {
+					cpl.vl_.unlock();
+					clients[pl].send_move_packet(c_id);
+				}
+				else {
+					cpl.vl_.unlock();
+					clients[pl].send_add_object_packet(c_id);
+				}
+			}
+
+			if (old_vlist.count(pl) == 0) {
+				clients[c_id].send_add_object_packet(pl);
+				if (false == is_pc(pl))
+					WakeUpNPC(pl);
+			}
+		}
 		break;
 	}
 	case CS_MOVE: {
 		CS_MOVE_PACKET* p = reinterpret_cast<CS_MOVE_PACKET*>(packet);
 		clients[c_id].last_move_time_ = p->move_time;
 		clients[c_id].dir_ = p->direction;
-		short x = clients[c_id].x_;
-		short y = clients[c_id].y_;
-		clients[c_id].prev_sector_ = clients[c_id].now_sector_;
-		clients[c_id].now_sector_ = x / SECTOR_SIZE + y / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
-		if (clients[c_id].prev_sector_ != clients[c_id].now_sector_) {
-			Sector[clients[c_id].prev_sector_].unsafe_erase(c_id);
-			Sector[clients[c_id].now_sector_].insert(c_id);
-		}
-		int my_sector = clients[c_id].now_sector_;
+		int x = clients[c_id].pos_.x_.load();
+		int y = clients[c_id].pos_.y_.load();
+
 		switch (p->direction) {
 		case 0: {
 			if (y <= 0) break;
@@ -322,25 +338,27 @@ void process_packet(int c_id, char* packet)
 			break; 
 		}
 		}
-		clients[c_id].x_ = x;
-		clients[c_id].y_ = y;
+		clients[c_id].pos_.x_.store(x);
+		clients[c_id].pos_.y_.store(y);
 
-		unordered_set<int> near_list;
+		
 		clients[c_id].vl_.lock();
-		unordered_set<int> old_vlist = clients[c_id].view_list_;
+		unordered_set<int> old_vl = clients[c_id].view_list_;
 		clients[c_id].vl_.unlock();
 
-		for (auto& cl : Sector[clients[c_id].now_sector_]) {
-			if (clients[cl].in_use_ == false) continue;
-			if (clients[cl].state_ != ST_INGAME) continue;
-			if (clients[cl].id_ == c_id) continue;
-			if (can_see(c_id, clients[cl].id_))
-				near_list.insert(clients[cl].id_);
+		unordered_set <int> vl = Sector.getNearbyObjects(clients[c_id].pos_);
+		unordered_set <int> new_vl;
+		for (int pl : vl) {
+			if (clients[pl].in_use_ == false) continue;
+			if (pl == c_id) continue;
+			if (clients[pl].state_ != ST_INGAME) continue;
+			if (false == can_see(pl, c_id)) continue;
+			new_vl.insert(pl);
 		}
 
 		clients[c_id].send_move_packet(c_id);
 
-		for (auto& pl : near_list) {
+		for (int  pl : new_vl) {
 			auto& cpl = clients[pl];
 			if (is_pc(pl)) {
 				cpl.vl_.lock();
@@ -353,30 +371,39 @@ void process_packet(int c_id, char* packet)
 					clients[pl].send_add_object_packet(c_id);
 				}
 			}
-			else WakeUpNPC(pl, c_id);
+			else WakeUpNPC(pl);
 
-			if (old_vlist.count(pl) == 0)
+			if (old_vl.count(pl) == 0)
 				clients[c_id].send_add_object_packet(pl);
 		}
 
-		for (auto& pl : old_vlist) {
-			if (0 == near_list.count(pl)) {
+		for (auto& pl : old_vl) {
+			if (0 == new_vl.count(pl)) {
 				clients[c_id].send_remove_player_packet(pl);
 				if (is_pc(pl))
 					clients[pl].send_remove_player_packet(c_id);
 			}
 		}
+		clients[c_id].vl_.lock();
+		clients[c_id].view_list_ = new_vl;
+		clients[c_id].vl_.unlock();
 		break;
 	}
 	case CS_ATTACK: {
 		int visual = clients[c_id].character_;
 		int dir = clients[c_id].dir_;
-		clients[c_id].vl_.lock();
-		unordered_set<int> old_vlist = clients[c_id].view_list_;
-		clients[c_id].vl_.unlock();
-		int my_sector = clients[c_id].now_sector_;
 
-		for (auto& pl : old_vlist) {
+		unordered_set <int> vl = Sector.getNearbyObjects(clients[c_id].pos_);
+		unordered_set <int> new_vl;
+		for (int pl : vl) {
+			if (clients[pl].in_use_ == false) continue;
+			if (pl == c_id) continue;
+			if (clients[pl].state_ != ST_INGAME) continue;
+			if (false == can_see(pl, c_id)) continue;
+			new_vl.insert(pl);
+		}
+
+		for (int pl : new_vl) {
 			if (clients[pl].in_use_ == false) continue;
 			if (visual != 2) {
 				if (is_pc(pl)) continue;
@@ -417,16 +444,17 @@ void process_packet(int c_id, char* packet)
 						break;
 					}
 				}
-				
 			}
-			for (auto& ppl : Sector) {
-				if (clients[ppl.first].in_use_ == false) continue;
-				if (!is_pc(ppl.first)) continue;
+
+
+			for (auto& ppl : new_vl) {
+				if (clients[ppl].in_use_ == false) continue;
+				if (!is_pc(ppl)) continue;
 				if (clients[pl].hp_ <= 0) {
-					clients[ppl.first].send_remove_player_packet(clients[pl].id_);
+					clients[ppl].send_remove_player_packet(clients[pl].id_);
 				}
 				else {
-					clients[ppl.first].send_stat_change_packet(pl, clients[pl].max_hp_,
+					clients[ppl].send_stat_change_packet(pl, clients[pl].max_hp_,
 						clients[pl].hp_, clients[pl].level_, clients[pl].exp_);
 				}
 			}
@@ -441,22 +469,47 @@ void process_packet(int c_id, char* packet)
 			if (my_map[y][x] == 50)
 				break;
 		}
-		clients[c_id].x_ = x;
-		clients[c_id].y_ = y;
+		x = clients[c_id].pos_.x_.load();
+		y = clients[c_id].pos_.y_.load();
+		clients[c_id].respawn_x_ = x;
+		clients[c_id].respawn_y_ = y;
 		clients[c_id].send_move_packet(c_id);
-		clients[c_id].prev_sector_ = clients[c_id].x_ / SECTOR_SIZE + clients[c_id].y_ / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
-		clients[c_id].now_sector_ = clients[c_id].prev_sector_;
-		int my_sector = clients[c_id].now_sector_;
-		Sector[clients[c_id].now_sector_].insert(c_id);
-		for (auto& pl : Sector) {
-			if (clients[pl.first].in_use_ == false) continue;
-			if (clients[pl.first].id_ == c_id) continue;
-			if (false == can_see(c_id, pl.first))
-				continue;
-			if (is_pc(pl.first)) clients[pl.first].send_add_object_packet(c_id);
-			else WakeUpNPC(pl.first, c_id);
-			clients[c_id].send_add_object_packet(pl.first);
+
+		clients[c_id].vl_.lock();
+		unordered_set<int> old_vl = clients[c_id].view_list_;
+		clients[c_id].vl_.unlock();
+
+		unordered_set <int> vl = Sector.getNearbyObjects(clients[c_id].pos_);
+		unordered_set <int> new_vl;
+		for (int pl : vl) {
+			if (clients[pl].in_use_ == false) continue;
+			if (pl == c_id) continue;
+			if (clients[pl].state_ != ST_INGAME) continue;
+			if (false == can_see(pl, c_id)) continue;
+			new_vl.insert(pl);
 		}
+
+		for (int pl : new_vl) {
+			if (clients[pl].in_use_ == false) continue;
+			if (clients[pl].id_ == c_id) continue;
+			if (false == can_see(c_id, pl))
+				continue;
+			if (is_pc(pl)) clients[pl].send_add_object_packet(c_id);
+			else WakeUpNPC(pl);
+			clients[c_id].send_add_object_packet(pl);
+		}
+
+		for (int pl : old_vl) {
+			if (0 == new_vl.count(pl)) {
+				clients[c_id].send_remove_player_packet(pl);
+				if (is_pc(pl))
+					clients[pl].send_remove_player_packet(c_id);
+			}
+		}
+
+		clients[c_id].vl_.lock();
+		clients[c_id].view_list_ = new_vl;
+		clients[c_id].vl_.unlock();
 	}
 	}
 }
@@ -471,10 +524,10 @@ void InitializeNPC()
 			if (my_map[y][x] == 50)
 				break;
 		}
-		GameObject object(x, y, i);
-		clients[i].x_ = x;
-		clients[i].y_ = y;
-		Npcs.addObject(object);
+		clients[i].pos_.x_ = x;
+		clients[i].pos_.y_ = y;
+		clients[i].pos_.id_ = i;
+		Sector.addObject(clients[i].pos_);
 		clients[i].id_ = i;
 		clients[i].state_ = ST_INGAME;
 		if (rand() % 20 == 1) {
@@ -563,24 +616,27 @@ void do_npc_random_move(int npc_id)
 	if (clients[npc_id].in_use_ == false)
 		return;
 	SESSION& npc = clients[npc_id];
-	int my_sector = clients[npc_id].now_sector_;
-	unordered_set<int> old_vl;
 	int distance;
 	int min_distance = 5;
 	int nearest = -1;
-	for (auto& obj : Sector) {
-		if (clients[obj.first].in_use_ == false) continue;
-		if (ST_INGAME != clients[obj.first].state_) continue;
-		if (true == is_npc(obj.first)) continue;
-		if (true == can_see_d(npc.id_, obj.first, &distance)) {
+
+	unordered_set<int> vl = Sector.getNearbyObjects(clients[npc_id].pos_);
+	unordered_set<int> new_vl;
+
+	for (int obj : vl) {
+		if (clients[obj].in_use_ == false) continue;
+		if (ST_INGAME != clients[obj].state_) continue;
+		if (true == is_npc(obj)) continue;
+		if (true == can_see_d(npc.id_, obj, &distance)) {
 			if (distance < min_distance) {
 				min_distance = distance;
-				nearest = obj.first;
+				nearest = obj;
 			}
-			old_vl.insert(clients[obj.first].id_);
+			new_vl.insert(obj);
 		}
 	}
 	if (min_distance <= 3) {
+		clients[nearest].vl_.lock();
 		int damage = npc.damage_ - clients[nearest].armor_;
 		if (damage < 0) damage = 0;
 		if (npc.level_ <= 10) {
@@ -610,13 +666,15 @@ void do_npc_random_move(int npc_id)
 		}
 
 		if (clients[nearest].hp_ > 0) {
+			clients[nearest].vl_.unlock();
 			clients[nearest].send_get_damage_packet(npc_id, damage, clients[nearest].hp_);
 		}
 		else {
 			clients[nearest].hp_ = 100;
-			clients[nearest].x_ = clients[nearest].first_x_;
-			clients[nearest].y_ = clients[nearest].first_y_;
+			clients[nearest].pos_.x_.store(clients[nearest].respawn_x_);
+			clients[nearest].pos_.y_.store(clients[nearest].respawn_y_);
 			clients[nearest].exp_ /= 2;
+			clients[nearest].vl_.unlock();
 			clients[nearest].send_stat_change_packet(nearest, clients[nearest].max_hp_,
 				clients[nearest].hp_, clients[nearest].level_, clients[nearest].exp_);
 			clients[nearest].send_move_packet(nearest);
@@ -625,8 +683,8 @@ void do_npc_random_move(int npc_id)
 	}
 
 
-	int x = npc.x_;
-	int y = npc.y_;
+	int x = npc.pos_.x_;
+	int y = npc.pos_.y_;
 	
 	switch (rand() % 4) {
 	case 0: {
@@ -655,26 +713,21 @@ void do_npc_random_move(int npc_id)
 	}
 	}
 	if (npc.level_ > 10) {
-		npc.x_ = x;
-		npc.y_ = y;
+		npc.pos_.x_ = x;
+		npc.pos_.y_ = y;
 	}
-	
 
-	clients[npc_id].prev_sector_ = clients[npc_id].now_sector_;
-	clients[npc_id].now_sector_ = x / SECTOR_SIZE + y / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
-	if (clients[npc_id].prev_sector_ != clients[npc_id].now_sector_) {
-		Sector[clients[npc_id].now_sector_].insert(npc_id);
-		Sector[clients[npc_id].prev_sector_].unsafe_erase(npc_id);
+	for (int obj : new_vl) {
+		if (clients[obj].in_use_ == false) continue;
+		if (ST_INGAME != clients[obj].state_) continue;
+		if (true == is_npc(obj)) continue;
+		if (true == can_see(npc.id_, obj))
+			new_vl.insert(clients[obj].id_);
 	}
-	my_sector = clients[npc_id].now_sector_;
-	unordered_set<int> new_vl;
-	for (auto& obj : Sector) {
-		if (clients[obj.first].in_use_ == false) continue;
-		if (ST_INGAME != clients[obj.first].state_) continue;
-		if (true == is_npc(obj.first)) continue;
-		if (true == can_see(npc.id_, obj.first))
-			new_vl.insert(clients[obj.first].id_);
-	}
+
+	clients[npc_id].vl_.lock();
+	unordered_set<int> old_vl = clients[npc_id].view_list_;
+	clients[npc_id].vl_.unlock();
 
 	for (auto pl : new_vl) {
 		if (0 == old_vl.count(pl)) {
@@ -733,8 +786,9 @@ void worker_thread(HANDLE h_iocp)
 					lock_guard<mutex> ll(clients[client_id].s_lock_);
 					clients[client_id].state_ = ST_ALLOC;
 				}
-				clients[client_id].x_ = 0;
-				clients[client_id].y_ = 0;
+				clients[client_id].pos_.x_ = 0;
+				clients[client_id].pos_.y_ = 0;
+				clients[client_id].pos_.id_ = client_id;
 				clients[client_id].id_ = client_id;
 				clients[client_id].name_[0] = 0;
 				clients[client_id].prev_remain_ = 0;
@@ -772,10 +826,10 @@ void worker_thread(HANDLE h_iocp)
 			clients[key].do_recv();
 			break;
 		}
-		case OP_SEND:
+		case OP_SEND: {
 			delete ex_over;
 			break;
-
+		}
 		case OP_NPC_MOVE: {
 			bool keep_alive = false;
 			for (int j = 0; j < MAX_USER; ++j) {
@@ -803,16 +857,22 @@ void worker_thread(HANDLE h_iocp)
 			clients[key].level_*= 2;
 			clients[key].hp_ = clients[key].level_*50;
 			clients[key].damage_ = clients[key].level_*2;
-			clients[key].prev_sector_ = clients[key].x_ / SECTOR_SIZE + clients[key].y_ / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
-			clients[key].now_sector_ = clients[key].prev_sector_;
-			int my_sector = clients[key].now_sector_;
-			Sector[my_sector].insert(my_sector);
-			for (auto& pl : Sector) {
-				if (clients[pl.first].in_use_ == false) continue;
-				if (clients[pl.first].id_ == key) continue;
-				if (false == can_see(key, pl.first))
-					continue;
-				if (is_pc(pl.first)) clients[pl.first].send_add_object_packet(key);
+
+			unordered_set<int> vl = Sector.getNearbyObjects(clients[key].pos_);
+			unordered_set<int> new_vl;
+			
+			for (int pl : vl) {
+				if (clients[pl].in_use_ == false) continue;
+				if (pl == key) continue;
+				if (clients[pl].state_ != ST_INGAME) continue;
+				if (false == can_see(pl, key)) continue;
+				if (!is_pc(pl)) continue;
+				new_vl.insert(pl);
+			}
+			
+			for (auto& pl : new_vl) {
+				if (clients[pl].in_use_ == false) continue;
+				clients[pl].send_add_object_packet(key);
 			}
 		}
 		}

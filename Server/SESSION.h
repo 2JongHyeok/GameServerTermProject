@@ -1,6 +1,7 @@
 #pragma once
 
 #include "OVER_EXP.h"
+#include "GameObject.h"
 #include "protocol.h"
 #include<mutex>
 #include<set>
@@ -19,6 +20,8 @@ public:
 	int id_;
 	SOCKET socket_;
 	GameObject pos_;
+	int respawn_x_;
+	int respawn_y_;
 	char	name_[NAME_SIZE];
 	std::mutex	vl_;
 	int		prev_remain_;
@@ -30,23 +33,16 @@ public:
 	int		max_exp_;
 	int		level_;
 	std::mutex	ll_;
-	int		prev_sector_;
-	int		now_sector_;
-	std::set<int> near_sectors;
 	bool	in_use_;
 	int		dir_;
 	int		damage_;
 	int		armor_;
 	std::unordered_set<int> view_list_;
-	std::unordered_set<int> old_view_list_;
-
-
 public:
 	SESSION()
 	{
 		id_ = -1;
 		socket_ = 0;
-		x_ = y_ = 0;
 		name_[0] = 0;
 		state_ = ST_FREE;
 		prev_remain_ = 0;
