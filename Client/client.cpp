@@ -351,7 +351,7 @@ void ProcessPacket(char* ptr)
 		avatar.exp_ = packet->exp;
 		g_left_x = packet->x - 10;
 		g_top_y = packet->y - 10;
-		avatar.change_texture(packet->visual);
+		avatar.change_texture(packet->character);
 		avatar.set_hp(avatar.hp_);
 		avatar.show();
 	}
@@ -370,7 +370,7 @@ void ProcessPacket(char* ptr)
 		}
 		else if (id < MAX_USER) {
 			players[id] = OBJECT{ *pieces, 0, 0, 64, 64 };
-			players[id].change_texture(my_packet->visual);
+			players[id].change_texture(my_packet->character);
 			players[id].move(my_packet->x, my_packet->y);
 			players[id].set_name(my_packet->name);
 			players[id].set_hp(my_packet->hp);

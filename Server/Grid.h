@@ -21,7 +21,7 @@ public:
     Grid();
     void addObject(const GameObject& obj);
     void removeObject(const GameObject& obj);
-    void updateObject(const GameObject& oldPos, const GameObject& newPos);
+    void updateObject(const GameObject& oldPos, const int& x, const int& y);
     std::unordered_set<int> getNearbyObjects(const GameObject& obj);
 };
 

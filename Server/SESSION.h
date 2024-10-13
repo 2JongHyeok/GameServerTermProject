@@ -1,12 +1,12 @@
 #pragma once
 
-#include "OVER_EXP.h"
-#include "GameObject.h"
-#include "protocol.h"
 #include<mutex>
 #include<set>
 #include<unordered_set>
 #include<array>
+#include "OVER_EXP.h"
+#include "GameObject.h"
+#include "protocol.h"
 
 enum S_STATE { ST_FREE, ST_ALLOC, ST_INGAME };
 
@@ -68,4 +68,4 @@ public:
 	void update_status();
 };
 
-std::array<SESSION, MAX_USER + MAX_NPC> clients;
+extern std::array<SESSION, MAX_USER + MAX_NPC> clients;

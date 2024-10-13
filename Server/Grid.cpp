@@ -1,6 +1,6 @@
 #include "Grid.h"
 
-inline Grid::Grid() : cols(W_WIDTH / CELL_SIZE), rows(W_HEIGHT / CELL_SIZE) {
+Grid::Grid() : cols(W_WIDTH / CELL_SIZE), rows(W_HEIGHT / CELL_SIZE) {
     cells.resize(rows, std::vector<std::unordered_set<int>>(cols));
     cellMutexes.reserve(rows);
     for (int i = 0; i < rows; ++i) {
@@ -8,7 +8,7 @@ inline Grid::Grid() : cols(W_WIDTH / CELL_SIZE), rows(W_HEIGHT / CELL_SIZE) {
     }
 }
 
-inline void Grid::addObject(const GameObject& obj) {
+void Grid::addObject(const GameObject& obj) {
     int cellX = obj.x_ / CELL_SIZE;
     int cellY = obj.y_ / CELL_SIZE;
     if (cellX >= 0 && cellX < cols && cellY >= 0 && cellY < rows) {
@@ -17,7 +17,7 @@ inline void Grid::addObject(const GameObject& obj) {
     }
 }
 
-inline void Grid::removeObject(const GameObject& obj) {
+void Grid::removeObject(const GameObject& obj) {
     int cellX = obj.x_ / CELL_SIZE;
     int cellY = obj.y_ / CELL_SIZE;
     if (cellX >= 0 && cellX < cols && cellY >= 0 && cellY < rows) {
@@ -26,11 +26,11 @@ inline void Grid::removeObject(const GameObject& obj) {
     }
 }
 
-inline void Grid::updateObject(const GameObject& oldPos, const GameObject& newPos) {
+void Grid::updateObject(const GameObject& oldPos, const int& x, const int& y) {
     int oldCellX = oldPos.x_ / CELL_SIZE;
     int oldCellY = oldPos.y_ / CELL_SIZE;
-    int newCellX = newPos.x_ / CELL_SIZE;
-    int newCellY = newPos.y_ / CELL_SIZE;
+    int newCellX = x / CELL_SIZE;
+    int newCellY = y / CELL_SIZE;
 
     if (oldCellX == newCellX && oldCellY == newCellY) {
         return;
@@ -41,10 +41,10 @@ inline void Grid::updateObject(const GameObject& oldPos, const GameObject& newPo
     std::lock(lockOld, lockNew);
 
     cells[oldCellY][oldCellX].erase(oldPos.id_);
-    cells[newCellY][newCellX].insert(newPos.id_);
+    cells[newCellY][newCellX].insert(oldPos.id_);
 }
 
-inline std::unordered_set<int> Grid::getNearbyObjects(const GameObject& obj) {
+std::unordered_set<int> Grid::getNearbyObjects(const GameObject& obj) {
     std::unordered_set<int> nearby;
     int cellX = obj.x_ / CELL_SIZE;
     int cellY = obj.y_ / CELL_SIZE;

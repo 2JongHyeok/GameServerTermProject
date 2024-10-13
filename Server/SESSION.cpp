@@ -1,6 +1,8 @@
 #include "SESSION.h"
 
-inline void SESSION::do_recv()
+std::array<SESSION, MAX_USER + MAX_NPC> clients;
+
+void SESSION::do_recv()
 {
 	DWORD recv_flag = 0;
 	memset(&recv_over_.over_, 0, sizeof(recv_over_.over_));
@@ -10,13 +12,13 @@ inline void SESSION::do_recv()
 		&recv_over_.over_, 0);
 }
 
-inline void SESSION::do_send(void* packet)
+void SESSION::do_send(void* packet)
 {
 	OVER_EXP* sdata = new OVER_EXP{ reinterpret_cast<char*>(packet) };
 	WSASend(socket_, &sdata->wsabuf_, 1, 0, 0, &sdata->over_, 0);
 }
 
-inline void SESSION::send_login_info_packet()
+void SESSION::send_login_info_packet()
 {
 	SC_LOGIN_INFO_PACKET p;
 	p.size = sizeof(SC_LOGIN_INFO_PACKET);
@@ -32,7 +34,7 @@ inline void SESSION::send_login_info_packet()
 	do_send(&p);
 }
 
-inline void SESSION::send_get_damage_packet(int c_id, int damage, int hp) {
+ void SESSION::send_get_damage_packet(int c_id, int damage, int hp) {
 
 	SC_GET_DAMAGE_PACKET p;
 	p.size = sizeof(SC_GET_DAMAGE_PACKET);
@@ -43,7 +45,7 @@ inline void SESSION::send_get_damage_packet(int c_id, int damage, int hp) {
 	do_send(&p);
 }
 
- inline void SESSION::send_move_packet(int c_id)
+ void SESSION::send_move_packet(int c_id)
  {
 	 SC_MOVE_OBJECT_PACKET p;
 	 p.size = sizeof(SC_MOVE_OBJECT_PACKET);
@@ -56,7 +58,7 @@ inline void SESSION::send_get_damage_packet(int c_id, int damage, int hp) {
  }
 
 
- inline void SESSION::send_add_object_packet(int c_id)
+void SESSION::send_add_object_packet(int c_id)
  {
 	 SC_ADD_OBJECT_PACKET add_packet;
 	 add_packet.size = sizeof(SC_ADD_OBJECT_PACKET);
@@ -73,7 +75,7 @@ inline void SESSION::send_get_damage_packet(int c_id, int damage, int hp) {
 	 do_send(&add_packet);
  }
 
- inline void SESSION::send_remove_player_packet(int c_id)
+ void SESSION::send_remove_player_packet(int c_id)
  {
 	 vl_.lock();
 	 if (view_list_.count(c_id))
@@ -90,7 +92,7 @@ inline void SESSION::send_get_damage_packet(int c_id, int damage, int hp) {
 	 do_send(&p);
  }
 
- inline void SESSION::send_chat_packet(int p_id, const char* mess)
+void SESSION::send_chat_packet(int p_id, const char* mess)
  {
 	 SC_CHAT_PACKET packet;
 	 packet.id = p_id;
@@ -100,7 +102,7 @@ inline void SESSION::send_get_damage_packet(int c_id, int damage, int hp) {
 	 do_send(&packet);
  }
 
- inline void SESSION::send_stat_change_packet(int c_id, int max_hp, int hp, int level, int exp) {
+void SESSION::send_stat_change_packet(int c_id, int max_hp, int hp, int level, int exp) {
 	 SC_STAT_CHANGE_PACKET p;
 	 p.size = sizeof(p);
 	 p.type = SC_STAT_CHANGE;
@@ -112,7 +114,7 @@ inline void SESSION::send_get_damage_packet(int c_id, int damage, int hp) {
 	 do_send(&p);
  }
 
- inline void SESSION::update_status() {
+ void SESSION::update_status() {
 	 hp_ = 100;
 	 if (character_ == 0) {
 		 damage_ = level_ * WARRIOR_STAT_ATK;
