@@ -22,7 +22,7 @@ char my_map[W_HEIGHT][W_WIDTH];
 Grid Sector;
 
 constexpr int VIEW_RANGE = 7;
-constexpr int NPC_VIEW_RANGE = 3;
+constexpr int NPC_VIEW_RANGE = 5;
 
 constexpr int SECTOR_SIZE = 20;
 
@@ -624,11 +624,9 @@ void do_npc_random_move(int npc_id)
 	int min_distance = 5;
 	int nearest = -1;
 
-	clients[npc_id].vl_.lock();
-	unordered_set<int> old_vl = clients[npc_id].view_list_;
-	clients[npc_id].vl_.unlock();
+	unordered_set<int> vl = Sector.getNearbyObjects(clients[npc_id].pos_);
 
-	for (int obj : old_vl) {
+	for (int obj : vl) {
 		if (clients[obj].in_use_ == false) continue;
 		if (ST_INGAME != clients[obj].state_) continue;
 		if (true == is_npc(obj)) continue;
@@ -639,8 +637,9 @@ void do_npc_random_move(int npc_id)
 			}
 		}
 	}
-
 	if (min_distance <= 3) {
+		cout << clients[nearest].hp_ << "\n";
+		clients[nearest].vl_.lock();
 		int damage = clients[npc_id].damage_ - clients[nearest].armor_;
 		if (damage < 0) damage = 0;
 		if (clients[npc_id].level_ <= 10) {
@@ -668,8 +667,8 @@ void do_npc_random_move(int npc_id)
 				clients[nearest].hp_ -= damage;
 			}
 		}
-
 		if (clients[nearest].hp_ > 0) {
+			clients[nearest].vl_.unlock();
 			clients[nearest].send_get_damage_packet(npc_id, damage, clients[nearest].hp_);
 		}
 		else {
@@ -680,7 +679,7 @@ void do_npc_random_move(int npc_id)
 			clients[nearest].exp_ /= 2;
 			clients[nearest].send_stat_change_packet(nearest, clients[nearest].max_hp_,
 				clients[nearest].hp_, clients[nearest].level_, clients[nearest].exp_);
-
+			clients[nearest].vl_.unlock();
 			clients[nearest].vl_.lock();
 			unordered_set<int> old_vl = clients[nearest].view_list_;
 			clients[nearest].vl_.unlock();
@@ -729,7 +728,7 @@ void do_npc_random_move(int npc_id)
 		}
 		return;
 	}
-
+	if (clients[npc_id].level_ <= 10) return;
 
 	int x = clients[npc_id].pos_.x_;
 	int y = clients[npc_id].pos_.y_;
@@ -760,14 +759,16 @@ void do_npc_random_move(int npc_id)
 		break;
 	}
 	}
-	if (clients[npc_id].level_ > 10) {
 		Sector.updateObject(clients[npc_id].pos_, x, y);
 		clients[npc_id].pos_.x_.store(x);
 		clients[npc_id].pos_.y_.store(y);
-	}
 
-	unordered_set<int> vl = Sector.getNearbyObjects(clients[npc_id].pos_);
+	vl = Sector.getNearbyObjects(clients[npc_id].pos_);
 	unordered_set<int> new_vl;
+
+	clients[npc_id].vl_.lock();
+	unordered_set<int>old_vl = clients[npc_id].view_list_;
+	clients[npc_id].vl_.unlock();
 
 	for (int obj : vl) {
 		if (clients[obj].in_use_ == false) continue;
@@ -800,6 +801,10 @@ void do_npc_random_move(int npc_id)
 			}
 		}
 	}
+
+	clients[npc_id].vl_.lock();
+	clients[npc_id].view_list_ = new_vl;
+	clients[npc_id].vl_.unlock();
 }
 
 void worker_thread(HANDLE h_iocp)
@@ -887,13 +892,13 @@ void worker_thread(HANDLE h_iocp)
 				if (clients[pl].in_use_ == false) continue;
 				if (pl == key) continue;
 				if (clients[pl].state_ != ST_INGAME) continue;
-				if (false == can_see(pl, key)) continue;
+				if (false == can_npc_see(pl, key)) continue;
 				if (!is_pc(pl)) continue;
 				keep_alive = true;
 				break;
 			}
 
-			if (true == keep_alive) {
+			if (keep_alive) {
 				do_npc_random_move(static_cast<int>(key));
 				if (clients[static_cast<int>(key)].in_use_ == false)
 					break;
