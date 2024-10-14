@@ -11,12 +11,12 @@ constexpr int MAP_COUNT = 24;
 constexpr int W_WIDTH = 2000;
 constexpr int W_HEIGHT = 2000;
 
-constexpr int WARRIOR_STAT_ATK = 1000;
-constexpr int WARRIOR_STAT_ARMOR = 1000;
+constexpr int WARRIOR_STAT_ATK = 200;
+constexpr int WARRIOR_STAT_ARMOR = 100;
 constexpr int MAGE_STAT_ATK = 20;
-constexpr int MAGE_STAT_ARMOR = 1000;
+constexpr int MAGE_STAT_ARMOR = 100;
 constexpr int PRIST_STAT_ATK = 5;
-constexpr int PRIST_STAT_ARMOR = 500;
+constexpr int PRIST_STAT_ARMOR = 100;
 
 // Packet ID
 constexpr char CS_LOGIN = 0;

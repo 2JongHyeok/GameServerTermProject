@@ -638,7 +638,6 @@ void do_npc_random_move(int npc_id)
 		}
 	}
 	if (min_distance <= 3) {
-		cout << clients[nearest].hp_ << "\n";
 		clients[nearest].vl_.lock();
 		int damage = clients[npc_id].damage_ - clients[nearest].armor_;
 		if (damage < 0) damage = 0;
