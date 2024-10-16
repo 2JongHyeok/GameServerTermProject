@@ -9,6 +9,7 @@
 #include "protocol.h"
 
 enum S_STATE { ST_FREE, ST_ALLOC, ST_INGAME };
+enum C_CLASS{WARRIOR, MAGE, PRIST};
 
 class SESSION {
 	OVER_EXP recv_over_;
@@ -26,7 +27,7 @@ public:
 	std::mutex	vl_;
 	int		prev_remain_;
 	unsigned int		last_move_time_;
-	int		character_;
+	C_CLASS		character_;
 	int		hp_;
 	int		max_hp_;
 	int		exp_;

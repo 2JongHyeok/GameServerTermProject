@@ -198,6 +198,7 @@ bool can_see(int a, int b)
 	if (std::abs(clients[a].pos_.x_.load() - clients[b].pos_.x_.load()) > VIEW_RANGE) return false;
 	return std::abs(clients[a].pos_.y_.load() - clients[b].pos_.y_.load()) <= VIEW_RANGE;
 }
+
 bool can_npc_see(int a, int b)
 {
 	if (std::abs(clients[a].pos_.x_.load() - clients[b].pos_.x_.load()) > NPC_VIEW_RANGE) return false;
@@ -393,45 +394,69 @@ void process_packet(int c_id, char* packet)
 		break;
 	}
 	case CS_ATTACK: {
-		int visual = clients[c_id].character_;
+		C_CLASS c_class = clients[c_id].character_;
 		int dir = clients[c_id].dir_;
 
 		unordered_set <int> vl = Sector.getNearbyObjects(clients[c_id].pos_);
 		unordered_set <int> new_vl;
-		for (int pl : vl) {
-			if (clients[pl].in_use_ == false) continue;
-			if (pl == c_id) continue;
-			if (clients[pl].state_ != ST_INGAME) continue;
-			if (false == can_see(pl, c_id)) continue;
-			new_vl.insert(pl);
+		
+		if (c_class == PRIST) {
+			for (int pl : vl) {
+				if (clients[pl].in_use_ == false) continue;
+				if (pl == c_id) continue;
+				if (clients[pl].state_ != ST_INGAME) continue;
+				if (false == can_see(pl, c_id)) continue;
+				if (!in_my_attack_range(pl, c_id, c_class, AUTO, dir)) continue;
+				new_vl.insert(pl);
+			}
+		}
+		else {
+			for (int pl : vl) {
+				if (clients[pl].in_use_ == false) continue;
+				if (pl == c_id) continue;
+				if (clients[pl].state_ != ST_INGAME) continue;
+				if (false == can_see(pl, c_id)) continue;
+				if (!in_my_attack_range(pl, c_id, c_class, AUTO, dir)) continue;
+				new_vl.insert(pl);
+			}
+		}
+		for (int pl : new_vl) {
+
 		}
 
 		for (int pl : new_vl) {
 			if (clients[pl].in_use_ == false) continue;
-			if (visual != 2) {
+			if (character == WARRIOR || character == MAGE) {
 				if (is_pc(pl)) continue;
-				if (!in_my_attack_range(pl, c_id, visual, AUTO, dir)) continue;
+				if (!in_my_attack_range(pl, c_id, character, AUTO, dir)) continue;
+				clients[pl].vl_.lock();
 				clients[pl].hp_ -= clients[c_id].damage_;
+				clients[pl].vl_.unlock();
 			}
-			else if (visual == 2) {
-				if (!in_my_attack_range(pl, c_id, visual, AUTO, dir)) continue;
+			else if (character == 2) {
+				if (!in_my_attack_range(pl, c_id, character, AUTO, dir)) continue;
 				if (is_pc(pl)) {
+					clients[pl].vl_.lock();
 					clients[pl].hp_ += clients[c_id].damage_;
 					if (clients[pl].hp_ > 100)clients[pl].hp_ = 100;
+					clients[pl].vl_.unlock();
 					clients[pl].send_stat_change_packet(pl,clients[pl].max_hp_, clients[pl].hp_,
 						clients[pl].level_, clients[pl].exp_);
 					continue;
 				}
 				else {
+					clients[pl].vl_.lock();
 					clients[pl].hp_ -= clients[c_id].damage_;
+					clients[pl].vl_.unlock();
 				}
 			}
-
+			clients[pl].vl_.lock();
 			if (clients[pl].hp_ <= 0) {
+				clients[c_id].exp_ += clients[pl].level_* 50;
 				clients[pl].in_use_ = false;
+				clients[pl].vl_.unlock();
 				TIMER_EVENT ev{ pl, chrono::system_clock::now() + 30s, EV_RESURRECTION, 0 };
 				timer_queue.push(ev);
-				clients[c_id].exp_ += clients[pl].level_* 50;
 				while (true) {
 					if (clients[c_id].exp_ >= clients[c_id].max_exp_) {
 						clients[c_id].exp_ -= clients[c_id].max_exp_;
