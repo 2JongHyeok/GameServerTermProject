@@ -4,6 +4,7 @@
 #include<set>
 #include<unordered_set>
 #include<array>
+#include<atomic>
 #include "OVER_EXP.h"
 #include "GameObject.h"
 #include "protocol.h"
@@ -28,13 +29,13 @@ public:
 	int		prev_remain_;
 	unsigned int		last_move_time_;
 	C_CLASS		character_;
-	int		hp_;
+	std::atomic<int>		hp_;
 	int		max_hp_;
 	int		exp_;
 	int		max_exp_;
 	int		level_;
 	std::mutex	ll_;
-	bool	in_use_;
+	std::atomic<bool>	in_use_;
 	int		dir_;
 	int		damage_;
 	int		armor_;

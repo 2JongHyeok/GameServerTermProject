@@ -78,12 +78,12 @@ OVER_EXP g_a_over;
 
 enum ATTACK_TYPE { AUTO, SKILL1, SKILL2 };
 
-bool in_my_attack_range(int target, int player, int visual, ATTACK_TYPE attack_type, int dir) {
+bool in_my_attack_range(int target, int player, C_CLASS c_class, ATTACK_TYPE attack_type, int dir) {
 	int t_x = clients[target].pos_.x_.load();
 	int t_y = clients[target].pos_.y_.load();
 	int p_x = clients[player].pos_.x_.load();
 	int p_y = clients[player].pos_.y_.load();
-	if (visual == 0) {
+	if (c_class == WARRIOR) {
 		switch (attack_type)
 		{
 		case AUTO:
@@ -125,7 +125,7 @@ bool in_my_attack_range(int target, int player, int visual, ATTACK_TYPE attack_t
 			break;
 		}
 	}
-	else if (visual == 1) {
+	else if (c_class == MAGE) {
 		switch (attack_type)
 		{
 		case AUTO:
@@ -167,7 +167,7 @@ bool in_my_attack_range(int target, int player, int visual, ATTACK_TYPE attack_t
 			break;
 		}
 	}
-	else if (visual == 2) {
+	else if (c_class == PRIST) {
 		switch (attack_type)
 		{
 		case AUTO:
@@ -255,16 +255,18 @@ void process_packet(int c_id, char* packet)
 			
 			clients[c_id].level_ = 1;
 			int character = rand() % 3;
-			clients[c_id].character_ = character;
 			if (character == 0) {
+				clients[c_id].character_ = WARRIOR;
 				clients[c_id].damage_ = WARRIOR_STAT_ATK * clients[c_id].level_;
 				clients[c_id].armor_ = WARRIOR_STAT_ARMOR * clients[c_id].level_;
 			}
 			else if (character == 1) {
+				clients[c_id].character_ = MAGE;
 				clients[c_id].damage_ = MAGE_STAT_ATK * clients[c_id].level_;
 				clients[c_id].armor_ = MAGE_STAT_ARMOR * clients[c_id].level_;
 			}
 			else if (character == 2) {
+				clients[c_id].character_ = PRIST;
 				clients[c_id].damage_ = PRIST_STAT_ATK * clients[c_id].level_;
 				clients[c_id].armor_ = PRIST_STAT_ARMOR * clients[c_id].level_;
 			}
@@ -399,8 +401,8 @@ void process_packet(int c_id, char* packet)
 
 		unordered_set <int> vl = Sector.getNearbyObjects(clients[c_id].pos_);
 		unordered_set <int> new_vl;
-		
-		if (c_class == PRIST) {
+
+		if (c_class == PRIST) { // 클래스 확인
 			for (int pl : vl) {
 				if (clients[pl].in_use_ == false) continue;
 				if (pl == c_id) continue;
@@ -408,6 +410,84 @@ void process_packet(int c_id, char* packet)
 				if (false == can_see(pl, c_id)) continue;
 				if (!in_my_attack_range(pl, c_id, c_class, AUTO, dir)) continue;
 				new_vl.insert(pl);
+			}
+			for (int pl : new_vl) {
+				if (is_npc(pl)) {	// NPC이면 공격
+
+					bool kill = false;
+					while (true) {	// CAS를 사용해 체력 바꿔주기
+						int hp = clients[pl].hp_.load();
+						if (hp <= 0) break;
+						int now_hp = hp - clients[c_id].damage_;
+						if (std::atomic_compare_exchange_strong(&clients[pl].hp_, &hp, now_hp)) {
+							if (hp > 0 && now_hp <= 0) {
+								clients[pl].in_use_ = false;
+								kill = true;
+							}
+							break;
+						}
+					}
+					if (kill) {
+						clients[c_id].exp_ += clients[pl].level_ * 50;
+						TIMER_EVENT ev{ pl, chrono::system_clock::now() + 30s, EV_RESURRECTION, 0 };
+						timer_queue.push(ev);
+						while (true) {	// 레벨업 할 경우 스텟 바꿔주기
+							if (clients[c_id].exp_ >= clients[c_id].max_exp_) {
+								clients[c_id].exp_ -= clients[c_id].max_exp_;
+								clients[c_id].max_exp_ *= 2;
+								clients[c_id].level_ += 1;
+								clients[c_id].update_status();
+							}
+							else
+								break;
+						}
+						clients[c_id].send_stat_change_packet(c_id, clients[c_id].max_hp_, clients[c_id].hp_, clients[c_id].level_, clients[c_id].exp_);
+						// 죽은 NPC 시야에서 삭제
+
+						unordered_set <int> vl = Sector.getNearbyObjects(clients[pl].pos_);
+						unordered_set <int> new_vl;
+						for (int pll : vl) {
+							if (clients[pll].in_use_ == false) continue;
+							if (pll == pl) continue;
+							if (clients[pll].state_ != ST_INGAME) continue;
+							if (false == can_see(pll, pl)) continue;
+							new_vl.insert(pll);
+						}
+						for (int pll : new_vl) {
+							clients[pll].send_remove_player_packet(pl);
+						}
+					}
+					else {
+						unordered_set <int> vl = Sector.getNearbyObjects(clients[pl].pos_);
+						unordered_set <int> new_vl;
+						for (int pll : vl) {
+							if (clients[pll].in_use_ == false) continue;
+							if (pll == pl) continue;
+							if (clients[pll].state_ != ST_INGAME) continue;
+							if (false == can_see(pll, pl)) continue;
+							new_vl.insert(pll);
+						}
+						for (int pll : new_vl) {
+							clients[pll].send_stat_change_packet(pl, clients[pl].max_hp_,
+								clients[pl].hp_, clients[pl].level_, clients[pl].exp_);
+						}
+
+					}
+				}
+				else {	// 플레이어면 힐
+					if (clients[pl].hp_ < 100) {
+						while (true) {
+							int hp = clients[pl].hp_.load();
+							int now_hp = hp + clients[c_id].damage_;
+							if (now_hp >= 100)
+								now_hp = 100;
+							if (std::atomic_compare_exchange_strong(&clients[pl].hp_, &hp, now_hp)) {
+								break;
+							}
+						}
+						clients[pl].send_stat_change_packet(pl, clients[pl].max_hp_, clients[pl].hp_, clients[pl].level_, clients[pl].exp_);
+					}
+				}
 			}
 		}
 		else {
@@ -416,74 +496,71 @@ void process_packet(int c_id, char* packet)
 				if (pl == c_id) continue;
 				if (clients[pl].state_ != ST_INGAME) continue;
 				if (false == can_see(pl, c_id)) continue;
+				if (!is_npc(pl))continue;
 				if (!in_my_attack_range(pl, c_id, c_class, AUTO, dir)) continue;
 				new_vl.insert(pl);
 			}
-		}
-		for (int pl : new_vl) {
+			for (int pl : new_vl) {
+				bool kill = false;
+				while (true) {	// CAS를 사용해 체력 바꿔주기
 
-		}
-
-		for (int pl : new_vl) {
-			if (clients[pl].in_use_ == false) continue;
-			if (character == WARRIOR || character == MAGE) {
-				if (is_pc(pl)) continue;
-				if (!in_my_attack_range(pl, c_id, character, AUTO, dir)) continue;
-				clients[pl].vl_.lock();
-				clients[pl].hp_ -= clients[c_id].damage_;
-				clients[pl].vl_.unlock();
-			}
-			else if (character == 2) {
-				if (!in_my_attack_range(pl, c_id, character, AUTO, dir)) continue;
-				if (is_pc(pl)) {
-					clients[pl].vl_.lock();
-					clients[pl].hp_ += clients[c_id].damage_;
-					if (clients[pl].hp_ > 100)clients[pl].hp_ = 100;
-					clients[pl].vl_.unlock();
-					clients[pl].send_stat_change_packet(pl,clients[pl].max_hp_, clients[pl].hp_,
-						clients[pl].level_, clients[pl].exp_);
-					continue;
-				}
-				else {
-					clients[pl].vl_.lock();
-					clients[pl].hp_ -= clients[c_id].damage_;
-					clients[pl].vl_.unlock();
-				}
-			}
-			clients[pl].vl_.lock();
-			if (clients[pl].hp_ <= 0) {
-				clients[c_id].exp_ += clients[pl].level_* 50;
-				clients[pl].in_use_ = false;
-				clients[pl].vl_.unlock();
-				TIMER_EVENT ev{ pl, chrono::system_clock::now() + 30s, EV_RESURRECTION, 0 };
-				timer_queue.push(ev);
-				while (true) {
-					if (clients[c_id].exp_ >= clients[c_id].max_exp_) {
-						clients[c_id].exp_ -= clients[c_id].max_exp_;
-						clients[c_id].max_exp_ *= 2;
-						clients[c_id].level_ += 1;
-						clients[c_id].update_status();
-						clients[c_id].send_stat_change_packet(c_id, clients[c_id].max_hp_,
-							clients[c_id].hp_, clients[c_id].level_, clients[c_id].exp_);
-					}
-					else {
-						clients[c_id].send_stat_change_packet(c_id, clients[c_id].max_hp_,
-							clients[c_id].hp_, clients[c_id].level_, clients[c_id].exp_);
+					int hp = clients[pl].hp_.load();
+					if (hp <= 0) break;
+					int now_hp = hp - clients[c_id].damage_;
+					if (std::atomic_compare_exchange_strong(&clients[pl].hp_, &hp, now_hp)) {
+						if (hp > 0 && now_hp <= 0) {
+							clients[pl].in_use_ = false;
+							kill = true;
+						}
 						break;
 					}
 				}
-			}
+				if (kill) {
+					clients[c_id].exp_ += clients[pl].level_ * 50;
+					TIMER_EVENT ev{ pl, chrono::system_clock::now() + 30s, EV_RESURRECTION, 0 };
+					timer_queue.push(ev);
+					while (true) {	// 레벨업 할 경우 스텟 바꿔주기
+						if (clients[c_id].exp_ >= clients[c_id].max_exp_) {
+							clients[c_id].exp_ -= clients[c_id].max_exp_;
+							clients[c_id].max_exp_ *= 2;
+							clients[c_id].level_ += 1;
+							clients[c_id].update_status();
+						}
+						else
+							break;
+					}
+					clients[c_id].send_stat_change_packet(c_id, clients[c_id].max_hp_, clients[c_id].hp_, clients[c_id].level_, clients[c_id].exp_);
 
+					// 죽은 NPC 시야에서 삭제
 
-			for (auto& ppl : new_vl) {
-				if (clients[ppl].in_use_ == false) continue;
-				if (!is_pc(ppl)) continue;
-				if (clients[pl].hp_ <= 0) {
-					clients[ppl].send_remove_player_packet(clients[pl].id_);
+					unordered_set <int> vl = Sector.getNearbyObjects(clients[pl].pos_);
+					unordered_set <int> new_vl;
+					for (int pll : vl) {
+						if (clients[pll].in_use_ == false) continue;
+						if (pll == pl) continue;
+						if (clients[pll].state_ != ST_INGAME) continue;
+						if (false == can_see(pll, pl)) continue;
+						new_vl.insert(pll);
+					}
+					for (int pll : new_vl) {
+						clients[pll].send_remove_player_packet(pl);
+					}
 				}
 				else {
-					clients[ppl].send_stat_change_packet(pl, clients[pl].max_hp_,
-						clients[pl].hp_, clients[pl].level_, clients[pl].exp_);
+					unordered_set <int> vl = Sector.getNearbyObjects(clients[pl].pos_);
+					unordered_set <int> new_vl;
+					for (int pll : vl) {
+						if (clients[pll].in_use_ == false) continue;
+						if (pll == pl) continue;
+						if (clients[pll].state_ != ST_INGAME) continue;
+						if (false == can_see(pll, pl)) continue;
+						new_vl.insert(pll);
+					}
+					for (int pll : new_vl) {
+						clients[pll].send_stat_change_packet(pl, clients[pl].max_hp_,
+							clients[pl].hp_, clients[pl].level_, clients[pl].exp_);
+					}
+					
 				}
 			}
 		}

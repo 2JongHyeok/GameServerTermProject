@@ -108,23 +108,28 @@ void SESSION::send_stat_change_packet(int c_id, int max_hp, int hp, int level, i
 	 p.type = SC_STAT_CHANGE;
 	 p.id = c_id;
 	 p.max_hp = max_hp;
+	 p.hp = hp;
 	 p.level = level;
 	 p.exp = exp;
-	 p.hp = hp;
 	 do_send(&p);
  }
 
  void SESSION::update_status() {
-	 hp_ = 100;
-	 if (character_ == 0) {
+	 while (true) {
+		 int hp = hp_;
+		 if (std::atomic_compare_exchange_strong(&hp_, &hp, 100)) {
+			 break;
+		 }
+	 }
+	 if (character_ == WARRIOR) {
 		 damage_ = level_ * WARRIOR_STAT_ATK;
 		 armor_ = level_ * WARRIOR_STAT_ARMOR;
 	 }
-	 else if (character_ == 1) {
+	 else if (character_ == MAGE) {
 		 damage_ = level_ * MAGE_STAT_ATK;
 		 armor_ = level_ * MAGE_STAT_ARMOR;
 	 }
-	 else if (character_ == 2) {
+	 else if (character_ == PRIST) {
 		 damage_ = level_ * PRIST_STAT_ATK;
 		 armor_ = level_ * PRIST_STAT_ARMOR;
 	 }
