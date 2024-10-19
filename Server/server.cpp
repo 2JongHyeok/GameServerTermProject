@@ -246,9 +246,12 @@ void process_packet(int c_id, char* packet)
 		clients[c_id].db_state_ = 1;
 		CS_LOGIN_PACKET* p = reinterpret_cast<CS_LOGIN_PACKET*>(packet);
 		clients[c_id].login_id_ = p->id;
+		db_queue.push(c_id);
 		while (clients[c_id].db_state_ >= 1) {
 			continue;
 		}
+		if (clients[c_id].db_state_ == -1)
+			return;
 		strcpy_s(clients[c_id].name_, p->name);
 		{
 			lock_guard<mutex> ll{ clients[c_id].s_lock_};
@@ -1072,7 +1075,7 @@ void connect_db() {
 	SQLHDBC hdbc = NULL;
 	SQLHSTMT hstmt = NULL;
 	SQLINTEGER  userId, userX, userY, userLevel, userExp;
-	SQLWCHAR userName;
+	SQLWCHAR userName[NAME_SIZE];
 	SQLLEN cbName = 0, cbId = 0, cbX = 0, cbY = 0, cbLevel = 0, cbExp = 0;;
 
 	SQLRETURN retcode;
@@ -1096,6 +1099,10 @@ void connect_db() {
 							}
 							int userId;
 							db_queue.try_pop(userId);
+							if (SQL_SUCCESS != SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt)) {
+								cout << "SQLAllockHandleError\n";
+								exit(1);
+							}
 							if (clients[userId].db_state_ == 1) {
 								wstring func = L"EXEC SearchClient ";
 								func += std::to_wstring(clients[userId].login_id_);
@@ -1113,7 +1120,10 @@ void connect_db() {
 										}
 
 										if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
-											strcpy_s(clients[userId].name_, userName);
+											WideCharToMultiByte(CP_ACP, 0, userName, -1, clients[userId].name_,
+												sizeof(clients[userId].name_), NULL, NULL);
+											clients[userId].level_ = userLevel;
+											clients[userId].exp_ = userExp;
 											clients[userId].pos_.x_ = userX;
 											clients[userId].pos_.y_ = userX;
 											clients[userId].db_state_ = 0;
@@ -1122,7 +1132,6 @@ void connect_db() {
 										else {
 											clients[userId].db_state_ = -1;
 											cout << clients[userId].login_id_ << " Login Fail\n";
-
 											break;
 										}
 									}
@@ -1132,9 +1141,13 @@ void connect_db() {
 								}
 							}
 							else if (clients[userId].db_state_ == 2) {
-								wstring func = L"EXEC SavePosition ";
+								wstring func = L"EXEC SaveData ";
 								func += std::to_wstring(clients[userId].login_id_);
 								func += L", ";
+								func += std::to_wstring(clients[userId].level_);
+								func += L", ";
+								func += std::to_wstring(clients[userId].exp_);
+								func += L", ";	
 								func += std::to_wstring(clients[userId].pos_.x_);
 								func += L", ";
 								func += std::to_wstring(clients[userId].pos_.y_);
@@ -1144,7 +1157,7 @@ void connect_db() {
 								else
 									HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
 							}
-							retcode = SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt);
+							SQLFreeHandle(SQL_HANDLE_STMT, hstmt);
 						}
 					}
 				}

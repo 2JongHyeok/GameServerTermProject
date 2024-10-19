@@ -534,12 +534,10 @@ void send_packet(void* packet)
 
 int main()
 {
-	string player_name;
+	string name;
 	int id;
 	cout << "Enter Your Id : ";
 	cin >> id;
-	cout << "Enter player_name : ";
-	cin >> player_name;
 	ml.Load_Map_info();
 	wcout.imbue(locale("korean"));
 	sf::Socket::Status status = s_socket.connect("127.0.0.1", PORT_NUM);
@@ -555,8 +553,8 @@ int main()
 	p.size = sizeof(p);
 	p.type = CS_LOGIN;
 	p.id = id;
-	
-	strcpy_s(p.name, player_name.c_str());
+	name = to_string(id);
+	strcpy_s(p.name,name.c_str());
 	send_packet(&p);
 	avatar.set_name(p.name);
 
