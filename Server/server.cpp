@@ -255,13 +255,8 @@ void process_packet(int c_id, char* packet)
 		strcpy_s(clients[c_id].name_, p->name);
 		{
 			lock_guard<mutex> ll{ clients[c_id].s_lock_};
-			clients[c_id].pos_.x_.store(rand() % W_WIDTH);
-			clients[c_id].pos_.y_.store(rand() % W_HEIGHT);
-			clients[c_id].respawn_x_ = clients[c_id].pos_.x_;
-			clients[c_id].respawn_y_ = clients[c_id].pos_.y_;
 			clients[c_id].pos_.id_ = c_id;
 			
-			clients[c_id].level_ = 1;
 			int character = rand() % 3;
 			if (character == 0) {
 				clients[c_id].character_ = WARRIOR;
@@ -939,6 +934,8 @@ void worker_thread(HANDLE h_iocp)
 
 		if ((0 == num_bytes) && ((ex_over->comp_type_ == OP_RECV) || (ex_over->comp_type_ == OP_SEND))) {
 			disconnect(static_cast<int>(key));
+			clients[key].db_state_ = 2;
+			db_queue.push(key);
 			if (ex_over->comp_type_ == OP_SEND) delete ex_over;
 			continue;
 		}
@@ -1074,7 +1071,7 @@ void connect_db() {
 	SQLHENV henv = NULL;
 	SQLHDBC hdbc = NULL;
 	SQLHSTMT hstmt = NULL;
-	SQLINTEGER  userId, userX, userY, userLevel, userExp;
+	SQLINTEGER  userId=0, userX=0, userY=0, userLevel=0, userExp=0;
 	SQLWCHAR userName[NAME_SIZE];
 	SQLLEN cbName = 0, cbId = 0, cbX = 0, cbY = 0, cbLevel = 0, cbExp = 0;;
 
@@ -1109,10 +1106,10 @@ void connect_db() {
 								retcode = SQLExecDirect(hstmt, (SQLWCHAR*)func.c_str(), SQL_NTS);
 								if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
 									SQLBindCol(hstmt, 1, SQL_C_WCHAR, &userName, sizeof(userName), &cbName);
-									SQLBindCol(hstmt, 1, SQL_C_LONG, &userLevel, 4, &cbLevel);
-									SQLBindCol(hstmt, 1, SQL_C_LONG, &userExp, 4, &cbExp);
-									SQLBindCol(hstmt, 1, SQL_C_LONG, &userX, 4, &cbX);
-									SQLBindCol(hstmt, 2, SQL_C_LONG, &userY, 4, &cbY);
+									SQLBindCol(hstmt, 2, SQL_C_LONG, &userLevel, 4, &cbLevel);
+									SQLBindCol(hstmt, 3, SQL_C_LONG, &userExp, 4, &cbExp);
+									SQLBindCol(hstmt, 4, SQL_C_LONG, &userX, 4, &cbX);
+									SQLBindCol(hstmt, 5, SQL_C_LONG, &userY, 4, &cbY);
 									for (int i = 0; ; ++i) {
 										retcode = SQLFetch(hstmt);
 										if (retcode == SQL_ERROR || retcode == SQL_SUCCESS_WITH_INFO) {
