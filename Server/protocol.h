@@ -40,6 +40,7 @@ constexpr char SC_GET_DAMAGE = 9;
 struct CS_LOGIN_PACKET {
 	unsigned short size;
 	char	type;
+	int		id;
 	char	name[NAME_SIZE];
 };
 

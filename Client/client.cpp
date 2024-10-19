@@ -535,6 +535,9 @@ void send_packet(void* packet)
 int main()
 {
 	string player_name;
+	int id;
+	cout << "Enter Your Id : ";
+	cin >> id;
 	cout << "Enter player_name : ";
 	cin >> player_name;
 	ml.Load_Map_info();
@@ -551,7 +554,7 @@ int main()
 	CS_LOGIN_PACKET p;
 	p.size = sizeof(p);
 	p.type = CS_LOGIN;
-
+	p.id = id;
 	
 	strcpy_s(p.name, player_name.c_str());
 	send_packet(&p);

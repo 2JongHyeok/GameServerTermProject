@@ -9,11 +9,11 @@
 #include <concurrent_unordered_map.h>
 #include <fstream>
 #include <concurrent_priority_queue.h>
-#include <string>
+#include <concurrent_queue.h>
+
 #include "protocol.h"
 #include "Grid.h"
 #include "SESSION.h"
-
 
 using namespace std;
 constexpr int map_count = 24;
@@ -38,6 +38,7 @@ struct TIMER_EVENT {
 	}
 };
 concurrency::concurrent_priority_queue<TIMER_EVENT> timer_queue;
+concurrency::concurrent_queue<int> db_queue;
 
 void Load_Map_info() {
 	std::ifstream in{ "mymap.txt" };
@@ -242,8 +243,12 @@ void process_packet(int c_id, char* packet)
 {
 	switch (packet[2]) {
 	case CS_LOGIN: {
+		clients[c_id].db_state_ = 1;
 		CS_LOGIN_PACKET* p = reinterpret_cast<CS_LOGIN_PACKET*>(packet);
-		clients[c_id].in_use_ = true;
+		clients[c_id].login_id_ = p->id;
+		while (clients[c_id].db_state_ >= 1) {
+			continue;
+		}
 		strcpy_s(clients[c_id].name_, p->name);
 		{
 			lock_guard<mutex> ll{ clients[c_id].s_lock_};
@@ -272,6 +277,7 @@ void process_packet(int c_id, char* packet)
 			}
 			clients[c_id].state_ = ST_INGAME;
 		}
+		clients[c_id].in_use_ = true;
 		clients[c_id].send_login_info_packet();
 		Sector.addObject(clients[c_id].pos_);
 		
@@ -920,6 +926,8 @@ void worker_thread(HANDLE h_iocp)
 			if (ex_over->comp_type_ == OP_ACCEPT) cout << "Accept Error";
 			else {
 				cout << "GQCS Error on client[" << key << "]\n";
+				clients[key].db_state_ = 2;
+				db_queue.push(key);
 				disconnect(static_cast<int>(key));
 				if (ex_over->comp_type_ == OP_SEND) delete ex_over;
 				continue;
@@ -1039,6 +1047,119 @@ void worker_thread(HANDLE h_iocp)
 	}
 }
 
+void HandleDiagnosticRecord(SQLHANDLE hHandle, SQLSMALLINT hType, RETCODE RetCode)
+{
+	SQLSMALLINT iRec = 0;
+	SQLINTEGER iError;
+	WCHAR wszMessage[1000];
+	WCHAR wszState[SQL_SQLSTATE_SIZE + 1];
+	if (RetCode == SQL_INVALID_HANDLE) {
+		fwprintf(stderr, L"Invalid handle!\n");
+		return;
+	}
+	while (SQLGetDiagRec(hType, hHandle, ++iRec, wszState, &iError, wszMessage,
+		(SQLSMALLINT)(sizeof(wszMessage) / sizeof(WCHAR)), (SQLSMALLINT*)NULL) == SQL_SUCCESS) {
+		// Hide data truncated..
+		if (wcsncmp(wszState, L"01004", 5)) {
+			fwprintf(stderr, L"[%5.5s] %s (%d)\n", wszState, wszMessage, iError);
+		}
+	}
+}
+
+void connect_db() {
+	setlocale(LC_ALL, "korean");
+	SQLHENV henv = NULL;
+	SQLHDBC hdbc = NULL;
+	SQLHSTMT hstmt = NULL;
+	SQLINTEGER  userId, userX, userY, userLevel, userExp;
+	SQLWCHAR userName;
+	SQLLEN cbName = 0, cbId = 0, cbX = 0, cbY = 0, cbLevel = 0, cbExp = 0;;
+
+	SQLRETURN retcode;
+
+	// Allocate environment handle  
+	if (SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &henv) == SQL_SUCCESS) {
+		cout << "SQLAllocHandle OK\n";
+		if (SQLSetEnvAttr(henv, SQL_ATTR_ODBC_VERSION, (void*)SQL_OV_ODBC3, 0) == SQL_SUCCESS) {
+			cout << "SQLSetEnvAttr OK\n";
+			if (SQLAllocHandle(SQL_HANDLE_DBC, henv, &hdbc) == SQL_SUCCESS) {
+				cout << "SQLAllocHandle OK\n";
+				retcode = SQLConnect(hdbc, (SQLWCHAR*)L"GS_Term_Project", SQL_NTS, (SQLWCHAR*)NULL, 0, NULL, 0);
+				if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+					cout << "SQLConnect OK\n";
+					if (SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt) == SQL_SUCCESS) {
+						cout << "SQLAllocHandle OK\n";
+						while (true) {
+							if (db_queue.empty()) {
+								this_thread::sleep_for(10ms);
+								continue;
+							}
+							int userId;
+							db_queue.try_pop(userId);
+							if (clients[userId].db_state_ == 1) {
+								wstring func = L"EXEC SearchClient ";
+								func += std::to_wstring(clients[userId].login_id_);
+								retcode = SQLExecDirect(hstmt, (SQLWCHAR*)func.c_str(), SQL_NTS);
+								if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+									SQLBindCol(hstmt, 1, SQL_C_WCHAR, &userName, sizeof(userName), &cbName);
+									SQLBindCol(hstmt, 1, SQL_C_LONG, &userLevel, 4, &cbLevel);
+									SQLBindCol(hstmt, 1, SQL_C_LONG, &userExp, 4, &cbExp);
+									SQLBindCol(hstmt, 1, SQL_C_LONG, &userX, 4, &cbX);
+									SQLBindCol(hstmt, 2, SQL_C_LONG, &userY, 4, &cbY);
+									for (int i = 0; ; ++i) {
+										retcode = SQLFetch(hstmt);
+										if (retcode == SQL_ERROR || retcode == SQL_SUCCESS_WITH_INFO) {
+											HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
+										}
+
+										if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
+											strcpy_s(clients[userId].name_, userName);
+											clients[userId].pos_.x_ = userX;
+											clients[userId].pos_.y_ = userX;
+											clients[userId].db_state_ = 0;
+											break;
+										}
+										else {
+											clients[userId].db_state_ = -1;
+											cout << clients[userId].login_id_ << " Login Fail\n";
+
+											break;
+										}
+									}
+								}
+								else {
+									HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
+								}
+							}
+							else if (clients[userId].db_state_ == 2) {
+								wstring func = L"EXEC SavePosition ";
+								func += std::to_wstring(clients[userId].login_id_);
+								func += L", ";
+								func += std::to_wstring(clients[userId].pos_.x_);
+								func += L", ";
+								func += std::to_wstring(clients[userId].pos_.y_);
+								retcode = SQLExecDirect(hstmt, (SQLWCHAR*)func.c_str(), SQL_NTS);
+								if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO)
+									continue;
+								else
+									HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
+							}
+							retcode = SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Cleanup
+	if (hstmt) SQLFreeHandle(SQL_HANDLE_STMT, hstmt);
+	if (hdbc) {
+		SQLDisconnect(hdbc);
+		SQLFreeHandle(SQL_HANDLE_DBC, hdbc);
+	}
+	if (henv) SQLFreeHandle(SQL_HANDLE_ENV, henv);
+}
 int main()
 {
 	printf("맵 정보 준비중\n");
@@ -1073,9 +1194,11 @@ int main()
 	for (int i = 0; i < num_threads; ++i)
 		worker_threads.emplace_back(worker_thread, h_iocp);
 	thread timer_thread{ do_timer };
-	timer_thread.join();
+	thread db_thread{ connect_db };
 	for (auto& th : worker_threads)
 		th.join();
+	timer_thread.join();
+	db_thread.join();
 	closesocket(g_s_socket);
 	WSACleanup();
 }

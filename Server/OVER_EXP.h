@@ -1,7 +1,17 @@
 #pragma once
 #include "protocol.h"
+
 #include <WS2tcpip.h>
 #include <MSWSock.h>
+
+#include <windows.h>  
+#include <stdio.h>  
+#include <locale.h>  
+#include <string>  
+
+#define UNICODE  
+#include <sqlext.h>  
+
 
 #pragma comment(lib, "WS2_32.lib")
 #pragma comment(lib, "MSWSock.lib")

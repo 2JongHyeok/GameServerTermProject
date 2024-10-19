@@ -39,6 +39,8 @@ public:
 	int		dir_;
 	int		damage_;
 	int		armor_;
+	volatile int db_state_;
+	int		login_id_;
 	std::unordered_set<int> view_list_;
 public:
 	SESSION()
