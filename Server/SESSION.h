@@ -30,6 +30,7 @@ public:
 	unsigned int		last_move_time_;
 	C_CLASS		character_;
 	std::atomic<int>		hp_;
+	std::mutex	hp_l_;
 	int		max_hp_;
 	int		exp_;
 	int		max_exp_;

@@ -744,7 +744,7 @@ void do_npc_random_move(int npc_id)
 		}
 	}
 	if (min_distance <= 3) {
-		clients[nearest].vl_.lock();
+		clients[nearest].hp_l_.lock();
 		int damage = clients[npc_id].damage_ - clients[nearest].armor_;
 		if (damage < 0) damage = 0;
 		if (clients[npc_id].level_ <= 10) {
@@ -773,7 +773,7 @@ void do_npc_random_move(int npc_id)
 			}
 		}
 		if (clients[nearest].hp_ > 0) {
-			clients[nearest].vl_.unlock();
+			clients[nearest].hp_l_.unlock();
 			clients[nearest].send_get_damage_packet(npc_id, damage, clients[nearest].hp_);
 		}
 		else {
@@ -784,7 +784,7 @@ void do_npc_random_move(int npc_id)
 			clients[nearest].exp_ /= 2;
 			clients[nearest].send_stat_change_packet(nearest, clients[nearest].max_hp_,
 				clients[nearest].hp_, clients[nearest].level_, clients[nearest].exp_);
-			clients[nearest].vl_.unlock();
+			clients[nearest].hp_l_.unlock();
 			clients[nearest].vl_.lock();
 			unordered_set<int> old_vl = clients[nearest].view_list_;
 			clients[nearest].vl_.unlock();
