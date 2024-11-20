@@ -246,12 +246,24 @@ void process_packet(int c_id, char* packet)
 		clients[c_id].db_state_ = 1;
 		CS_LOGIN_PACKET* p = reinterpret_cast<CS_LOGIN_PACKET*>(packet);
 		clients[c_id].login_id_ = p->id;
-		db_queue.push(c_id);
-		while (clients[c_id].db_state_ >= 1) {
-			continue;
+		if (c_id < 100) {
+			PostQueuedCompletionStatus(h_iocp, 1, c_id, &ov->over_);
+			db_queue.push(c_id);
+			while (clients[c_id].db_state_ >= 1) {
+				continue;
+			}
+			if (clients[c_id].db_state_ == -1)
+			{
+				return;
+			}
 		}
-		if (clients[c_id].db_state_ == -1)
-			return;
+		else {
+			clients[c_id].level_ = 100;
+			clients[c_id].exp_ = 0;
+			clients[c_id].pos_.x_ = rand() % 2000;
+			clients[c_id].pos_.y_ = rand() % 2000;
+			clients[c_id].db_state_ = 0;
+		}
 		strcpy_s(clients[c_id].name_, p->name);
 		{
 			lock_guard<mutex> ll{ clients[c_id].s_lock_};
@@ -1128,7 +1140,7 @@ void connect_db() {
 										}
 										else {
 											clients[userId].db_state_ = -1;
-											cout << clients[userId].login_id_ << " Login Fail\n";
+											//cout << clients[userId].login_id_ << " Login Fail\n";
 											break;
 										}
 									}
