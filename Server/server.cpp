@@ -243,32 +243,23 @@ void process_packet(int c_id, char* packet)
 {
 	switch (packet[2]) {
 	case CS_LOGIN: {
-		clients[c_id].db_state_ = 1;
 		CS_LOGIN_PACKET* p = reinterpret_cast<CS_LOGIN_PACKET*>(packet);
 		clients[c_id].login_id_ = p->id;
-		if (c_id < 100) {
-			PostQueuedCompletionStatus(h_iocp, 1, c_id, &ov->over_);
+		strcpy_s(clients[c_id].name_, p->name);
+		if (c_id < 300) {
 			db_queue.push(c_id);
-			while (clients[c_id].db_state_ >= 1) {
-				continue;
-			}
-			if (clients[c_id].db_state_ == -1)
-			{
-				return;
-			}
+			break;
 		}
-		else {
-			clients[c_id].level_ = 100;
-			clients[c_id].exp_ = 0;
-			clients[c_id].pos_.x_ = rand() % 2000;
-			clients[c_id].pos_.y_ = rand() % 2000;
-			clients[c_id].db_state_ = 0;
-		}
+		clients[c_id].level_ = 100;
+		clients[c_id].exp_ = 0;
+		clients[c_id].pos_.x_ = rand() % 2000;
+		clients[c_id].pos_.y_ = rand() % 2000;
+		clients[c_id].db_state_ = 0;
 		strcpy_s(clients[c_id].name_, p->name);
 		{
-			lock_guard<mutex> ll{ clients[c_id].s_lock_};
+			lock_guard<mutex> ll{ clients[c_id].s_lock_ };
 			clients[c_id].pos_.id_ = c_id;
-			
+
 			int character = rand() % 3;
 			if (character == 0) {
 				clients[c_id].character_ = WARRIOR;
@@ -290,7 +281,7 @@ void process_packet(int c_id, char* packet)
 		clients[c_id].in_use_ = true;
 		clients[c_id].send_login_info_packet();
 		Sector.addObject(clients[c_id].pos_);
-		
+
 		unordered_set <int> vl = Sector.getNearbyObjects(clients[c_id].pos_);
 		unordered_set <int> new_vl;
 		for (auto& pl : vl) {
@@ -325,6 +316,7 @@ void process_packet(int c_id, char* packet)
 					WakeUpNPC(pl);
 			}
 		}
+		break;
 		break;
 	}
 	case CS_MOVE: {
@@ -1054,6 +1046,75 @@ void worker_thread(HANDLE h_iocp)
 				if (clients[pl].in_use_ == false) continue;
 				clients[pl].send_add_object_packet(key);
 			}
+			break;
+		}
+		case OP_LOGIN: {
+			{
+				lock_guard<mutex> ll{ clients[key].s_lock_ };
+				clients[key].pos_.id_ = key;
+
+				int character = rand() % 3;
+				if (character == 0) {
+					clients[key].character_ = WARRIOR;
+					clients[key].damage_ = WARRIOR_STAT_ATK * clients[key].level_;
+					clients[key].armor_ = WARRIOR_STAT_ARMOR * clients[key].level_;
+				}
+				else if (character == 1) {
+					clients[key].character_ = MAGE;
+					clients[key].damage_ = MAGE_STAT_ATK * clients[key].level_;
+					clients[key].armor_ = MAGE_STAT_ARMOR * clients[key].level_;
+				}
+				else if (character == 2) {
+					clients[key].character_ = PRIST;
+					clients[key].damage_ = PRIST_STAT_ATK * clients[key].level_;
+					clients[key].armor_ = PRIST_STAT_ARMOR * clients[key].level_;
+				}
+				clients[key].state_ = ST_INGAME;
+			}
+			clients[key].in_use_ = true;
+			clients[key].send_login_info_packet();
+			Sector.addObject(clients[key].pos_);
+
+			unordered_set <int> vl = Sector.getNearbyObjects(clients[key].pos_);
+			unordered_set <int> new_vl;
+			for (auto& pl : vl) {
+				if (clients[pl].in_use_ == false) continue;
+				if (pl == key) continue;
+				if (clients[pl].state_ != ST_INGAME) continue;
+				if (false == can_see(pl, key)) continue;
+				new_vl.insert(pl);
+			}
+
+			clients[key].vl_.lock();
+			unordered_set<int> old_vlist = clients[key].view_list_;
+			clients[key].vl_.unlock();
+
+			for (auto pl : new_vl) {
+				auto& cpl = clients[pl];
+				if (is_pc(pl)) {
+					cpl.vl_.lock();
+					if (clients[pl].view_list_.count(key)) {
+						cpl.vl_.unlock();
+						clients[pl].send_move_packet(key);
+					}
+					else {
+						cpl.vl_.unlock();
+						clients[pl].send_add_object_packet(key);
+					}
+				}
+
+				if (old_vlist.count(pl) == 0) {
+					clients[key].send_add_object_packet(pl);
+					if (false == is_pc(pl))
+						WakeUpNPC(pl);
+				}
+			}
+			break;
+		}
+		case OP_LOGIN_FAIL: {
+			disconnect(static_cast<int>(key));
+			if (ex_over->comp_type_ == OP_SEND) delete ex_over;
+			continue;
 		}
 		}
 	}
@@ -1135,11 +1196,15 @@ void connect_db() {
 											clients[userId].exp_ = userExp;
 											clients[userId].pos_.x_ = userX;
 											clients[userId].pos_.y_ = userX;
-											clients[userId].db_state_ = 0;
+											OVER_EXP* ov = new OVER_EXP;
+											ov->comp_type_ = OP_LOGIN;
+											PostQueuedCompletionStatus(h_iocp, 1, userId, &ov->over_);
 											break;
 										}
 										else {
-											clients[userId].db_state_ = -1;
+											OVER_EXP* ov = new OVER_EXP;
+											ov->comp_type_ = OP_LOGIN_FAIL;
+											PostQueuedCompletionStatus(h_iocp, 1, userId, &ov->over_);
 											//cout << clients[userId].login_id_ << " Login Fail\n";
 											break;
 										}
