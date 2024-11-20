@@ -257,6 +257,9 @@ constexpr int DELAY_LIMIT = 100;
 constexpr int DELAY_LIMIT2 = 150;
 constexpr int ACCEPT_DELY = 50;
 
+int id = 1;
+mutex id_lock;
+
 void Adjust_Number_Of_Client()
 {
 	static int delay_multiplier = 1;
@@ -320,6 +323,9 @@ void Adjust_Number_Of_Client()
 
 	int temp = num_connections;
 	sprintf_s(l_packet.name, "%d", temp);
+	id_lock.lock();
+	l_packet.id = id++;
+	id_lock.unlock();
 	l_packet.size = sizeof(l_packet);
 	l_packet.type = CS_LOGIN;
 	SendPacket(num_connections, &l_packet);

@@ -246,77 +246,8 @@ void process_packet(int c_id, char* packet)
 		CS_LOGIN_PACKET* p = reinterpret_cast<CS_LOGIN_PACKET*>(packet);
 		clients[c_id].login_id_ = p->id;
 		strcpy_s(clients[c_id].name_, p->name);
-		if (c_id < 300) {
-			db_queue.push(c_id);
-			break;
-		}
-		clients[c_id].level_ = 100;
-		clients[c_id].exp_ = 0;
-		clients[c_id].pos_.x_ = rand() % 2000;
-		clients[c_id].pos_.y_ = rand() % 2000;
-		clients[c_id].db_state_ = 0;
-		strcpy_s(clients[c_id].name_, p->name);
-		{
-			lock_guard<mutex> ll{ clients[c_id].s_lock_ };
-			clients[c_id].pos_.id_ = c_id;
-
-			int character = rand() % 3;
-			if (character == 0) {
-				clients[c_id].character_ = WARRIOR;
-				clients[c_id].damage_ = WARRIOR_STAT_ATK * clients[c_id].level_;
-				clients[c_id].armor_ = WARRIOR_STAT_ARMOR * clients[c_id].level_;
-			}
-			else if (character == 1) {
-				clients[c_id].character_ = MAGE;
-				clients[c_id].damage_ = MAGE_STAT_ATK * clients[c_id].level_;
-				clients[c_id].armor_ = MAGE_STAT_ARMOR * clients[c_id].level_;
-			}
-			else if (character == 2) {
-				clients[c_id].character_ = PRIST;
-				clients[c_id].damage_ = PRIST_STAT_ATK * clients[c_id].level_;
-				clients[c_id].armor_ = PRIST_STAT_ARMOR * clients[c_id].level_;
-			}
-			clients[c_id].state_ = ST_INGAME;
-		}
-		clients[c_id].in_use_ = true;
-		clients[c_id].send_login_info_packet();
-		Sector.addObject(clients[c_id].pos_);
-
-		unordered_set <int> vl = Sector.getNearbyObjects(clients[c_id].pos_);
-		unordered_set <int> new_vl;
-		for (auto& pl : vl) {
-			if (clients[pl].in_use_ == false) continue;
-			if (pl == c_id) continue;
-			if (clients[pl].state_ != ST_INGAME) continue;
-			if (false == can_see(pl, c_id)) continue;
-			new_vl.insert(pl);
-		}
-
-		clients[c_id].vl_.lock();
-		unordered_set<int> old_vlist = clients[c_id].view_list_;
-		clients[c_id].vl_.unlock();
-
-		for (auto pl : new_vl) {
-			auto& cpl = clients[pl];
-			if (is_pc(pl)) {
-				cpl.vl_.lock();
-				if (clients[pl].view_list_.count(c_id)) {
-					cpl.vl_.unlock();
-					clients[pl].send_move_packet(c_id);
-				}
-				else {
-					cpl.vl_.unlock();
-					clients[pl].send_add_object_packet(c_id);
-				}
-			}
-
-			if (old_vlist.count(pl) == 0) {
-				clients[c_id].send_add_object_packet(pl);
-				if (false == is_pc(pl))
-					WakeUpNPC(pl);
-			}
-		}
-		break;
+		clients[c_id].db_state_ = 1;
+		db_queue.push(c_id);
 		break;
 	}
 	case CS_MOVE: {
@@ -1049,28 +980,25 @@ void worker_thread(HANDLE h_iocp)
 			break;
 		}
 		case OP_LOGIN: {
-			{
-				lock_guard<mutex> ll{ clients[key].s_lock_ };
-				clients[key].pos_.id_ = key;
-
-				int character = rand() % 3;
-				if (character == 0) {
-					clients[key].character_ = WARRIOR;
-					clients[key].damage_ = WARRIOR_STAT_ATK * clients[key].level_;
-					clients[key].armor_ = WARRIOR_STAT_ARMOR * clients[key].level_;
-				}
-				else if (character == 1) {
-					clients[key].character_ = MAGE;
-					clients[key].damage_ = MAGE_STAT_ATK * clients[key].level_;
-					clients[key].armor_ = MAGE_STAT_ARMOR * clients[key].level_;
-				}
-				else if (character == 2) {
-					clients[key].character_ = PRIST;
-					clients[key].damage_ = PRIST_STAT_ATK * clients[key].level_;
-					clients[key].armor_ = PRIST_STAT_ARMOR * clients[key].level_;
-				}
-				clients[key].state_ = ST_INGAME;
+			clients[key].pos_.id_ = key;
+			int character = rand() % 3;
+			if (character == 0) {
+				clients[key].character_ = WARRIOR;
+				clients[key].damage_ = WARRIOR_STAT_ATK * clients[key].level_;
+				clients[key].armor_ = WARRIOR_STAT_ARMOR * clients[key].level_;
 			}
+			else if (character == 1) {
+				clients[key].character_ = MAGE;
+				clients[key].damage_ = MAGE_STAT_ATK * clients[key].level_;
+				clients[key].armor_ = MAGE_STAT_ARMOR * clients[key].level_;
+			}
+			else if (character == 2) {
+				clients[key].character_ = PRIST;
+				clients[key].damage_ = PRIST_STAT_ATK * clients[key].level_;
+				clients[key].armor_ = PRIST_STAT_ARMOR * clients[key].level_;
+			}
+			clients[key].state_ = ST_INGAME;
+
 			clients[key].in_use_ = true;
 			clients[key].send_login_info_packet();
 			Sector.addObject(clients[key].pos_);
@@ -1112,9 +1040,10 @@ void worker_thread(HANDLE h_iocp)
 			break;
 		}
 		case OP_LOGIN_FAIL: {
+			cout << key << " : LOGIN_ FAIL\n";
 			disconnect(static_cast<int>(key));
 			if (ex_over->comp_type_ == OP_SEND) delete ex_over;
-			continue;
+			break;
 		}
 		}
 	}
@@ -1164,7 +1093,7 @@ void connect_db() {
 						cout << "SQLAllocHandle OK\n";
 						while (true) {
 							if (db_queue.empty()) {
-								this_thread::sleep_for(10ms);
+								this_thread::sleep_for(5ms);
 								continue;
 							}
 							int userId;
@@ -1192,16 +1121,17 @@ void connect_db() {
 										if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
 											WideCharToMultiByte(CP_ACP, 0, userName, -1, clients[userId].name_,
 												sizeof(clients[userId].name_), NULL, NULL);
-											clients[userId].level_ = userLevel;
+											clients[userId].level_ = 100;
 											clients[userId].exp_ = userExp;
 											clients[userId].pos_.x_ = userX;
-											clients[userId].pos_.y_ = userX;
+											clients[userId].pos_.y_ = userY;
 											OVER_EXP* ov = new OVER_EXP;
 											ov->comp_type_ = OP_LOGIN;
 											PostQueuedCompletionStatus(h_iocp, 1, userId, &ov->over_);
 											break;
 										}
 										else {
+
 											OVER_EXP* ov = new OVER_EXP;
 											ov->comp_type_ = OP_LOGIN_FAIL;
 											PostQueuedCompletionStatus(h_iocp, 1, userId, &ov->over_);
