@@ -219,14 +219,15 @@ bool can_see_d(int from, int to, int* distance)
 }
 
 
-int get_new_client_id()
+void get_new_client_id(int& id)
 {
 	for (int i = 0; i < MAX_USER; ++i) {
 		lock_guard <mutex> ll{ clients[i].s_lock_ };
-		if (clients[i].state_ == ST_FREE)
-			return i;
+		if (clients[i].state_ == ST_FREE) {
+			id = i;
+			return;
+		}
 	}
-	return -1;
 }
 
 void WakeUpNPC(int npc_id)
@@ -886,7 +887,8 @@ void worker_thread(HANDLE h_iocp)
 
 		switch (ex_over->comp_type_) {
 		case OP_ACCEPT: {
-			int client_id = get_new_client_id();
+			int client_id;
+			get_new_client_id(client_id);
 			if (client_id != -1) {
 				{
 					lock_guard<mutex> ll(clients[client_id].s_lock_);
