@@ -224,6 +224,7 @@ void get_new_client_id(int& id)
 	for (int i = 0; i < MAX_USER; ++i) {
 		lock_guard <mutex> ll{ clients[i].s_lock_ };
 		if (clients[i].state_ == ST_FREE) {
+			clients[i].state_ = ST_ALLOC;
 			id = i;
 			return;
 		}
@@ -890,10 +891,6 @@ void worker_thread(HANDLE h_iocp)
 			int client_id;
 			get_new_client_id(client_id);
 			if (client_id != -1) {
-				{
-					lock_guard<mutex> ll(clients[client_id].s_lock_);
-					clients[client_id].state_ = ST_ALLOC;
-				}
 				clients[client_id].pos_.x_ = 0;
 				clients[client_id].pos_.y_ = 0;
 				clients[client_id].pos_.id_ = client_id;
