@@ -44,8 +44,7 @@ void Grid::updateObject(const GameObject& oldPos, const int& x, const int& y) {
     cells[newCellY][newCellX].insert(oldPos.id_);
 }
 
-std::unordered_set<int> Grid::getNearbyObjects(const GameObject& obj) {
-    std::unordered_set<int> nearby;
+void Grid::getNearbyObjects(std::unordered_set<int> &vl, const GameObject& obj) {
     int cellX = obj.x_ / CELL_SIZE;
     int cellY = obj.y_ / CELL_SIZE;
 
@@ -56,11 +55,9 @@ std::unordered_set<int> Grid::getNearbyObjects(const GameObject& obj) {
             if (nx >= 0 && nx < cols && ny >= 0 && ny < rows) {
                 std::shared_lock<std::shared_mutex> lock(cellMutexes[ny][nx]);
                 for (int p : cells[ny][nx]) {
-                    nearby.insert(p);
+                    vl.insert(p);
                 }
             }
         }
     }
-
-    return nearby;
 }

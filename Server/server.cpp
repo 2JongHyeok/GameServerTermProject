@@ -291,7 +291,8 @@ void process_packet(int c_id, char* packet)
 		clients[c_id].vl_.lock();
 		unordered_set<int> old_vl = clients[c_id].view_list_;
 		clients[c_id].vl_.unlock();
-		unordered_set <int> vl = Sector.getNearbyObjects(clients[c_id].pos_);
+		unordered_set <int> vl;
+		Sector.getNearbyObjects(vl, clients[c_id].pos_);
 		unordered_set <int> new_vl;
 		for (int pl : vl) {
 			if (clients[pl].in_use_ == false) continue;
@@ -338,7 +339,8 @@ void process_packet(int c_id, char* packet)
 		C_CLASS c_class = clients[c_id].character_;
 		int dir = clients[c_id].dir_;
 
-		unordered_set <int> vl = Sector.getNearbyObjects(clients[c_id].pos_);
+		unordered_set <int> vl;
+		Sector.getNearbyObjects(vl, clients[c_id].pos_);
 		unordered_set <int> new_vl;
 
 		if (c_class == PRIST) { // 클래스 확인
@@ -383,7 +385,8 @@ void process_packet(int c_id, char* packet)
 						clients[c_id].send_stat_change_packet(c_id, clients[c_id].max_hp_, clients[c_id].hp_, clients[c_id].level_, clients[c_id].exp_);
 						// 죽은 NPC 시야에서 삭제
 
-						unordered_set <int> vl = Sector.getNearbyObjects(clients[pl].pos_);
+						unordered_set <int> vl;
+						Sector.getNearbyObjects(vl, clients[pl].pos_);
 						unordered_set <int> new_vl;
 						for (int pll : vl) {
 							if (clients[pll].in_use_ == false) continue;
@@ -397,7 +400,8 @@ void process_packet(int c_id, char* packet)
 						}
 					}
 					else {
-						unordered_set <int> vl = Sector.getNearbyObjects(clients[pl].pos_);
+						unordered_set <int> vl;
+						Sector.getNearbyObjects(vl, clients[pl].pos_);
 						unordered_set <int> new_vl;
 						for (int pll : vl) {
 							if (clients[pll].in_use_ == false) continue;
@@ -472,7 +476,8 @@ void process_packet(int c_id, char* packet)
 
 					// 죽은 NPC 시야에서 삭제
 
-					unordered_set <int> vl = Sector.getNearbyObjects(clients[pl].pos_);
+					unordered_set <int> vl;
+					Sector.getNearbyObjects(vl, clients[pl].pos_);
 					unordered_set <int> new_vl;
 					for (int pll : vl) {
 						if (clients[pll].in_use_ == false) continue;
@@ -486,7 +491,8 @@ void process_packet(int c_id, char* packet)
 					}
 				}
 				else {
-					unordered_set <int> vl = Sector.getNearbyObjects(clients[pl].pos_);
+					unordered_set <int> vl;
+					Sector.getNearbyObjects(vl, clients[pl].pos_);
 					unordered_set <int> new_vl;
 					for (int pll : vl) {
 						if (clients[pll].in_use_ == false) continue;
@@ -524,7 +530,8 @@ void process_packet(int c_id, char* packet)
 		unordered_set<int> old_vl = clients[c_id].view_list_;
 		clients[c_id].vl_.unlock();
 
-		unordered_set <int> vl = Sector.getNearbyObjects(clients[c_id].pos_);
+		unordered_set <int> vl;
+		Sector.getNearbyObjects(vl, clients[c_id].pos_);
 		unordered_set <int> new_vl;
 		for (int pl : vl) {
 			if (clients[pl].in_use_ == false) continue;
@@ -665,7 +672,8 @@ void do_npc_random_move(int npc_id)
 	int min_distance = 5;
 	int nearest = -1;
 
-	unordered_set<int> vl = Sector.getNearbyObjects(clients[npc_id].pos_);
+	unordered_set<int> vl;
+	Sector.getNearbyObjects(vl, clients[npc_id].pos_);
 
 	for (int obj : vl) {
 		if (clients[obj].in_use_ == false) continue;
@@ -723,7 +731,8 @@ void do_npc_random_move(int npc_id)
 			clients[nearest].vl_.lock();
 			unordered_set<int> old_vl = clients[nearest].view_list_;
 			clients[nearest].vl_.unlock();
-			unordered_set <int> vl = Sector.getNearbyObjects(clients[nearest].pos_);
+			unordered_set <int> vl;
+			Sector.getNearbyObjects(vl, clients[nearest].pos_);
 			unordered_set <int> new_vl;
 			for (int pl : vl) {
 				if (clients[pl].in_use_ == false) continue;
@@ -803,7 +812,7 @@ void do_npc_random_move(int npc_id)
 		clients[npc_id].pos_.x_.store(x);
 		clients[npc_id].pos_.y_.store(y);
 
-	vl = Sector.getNearbyObjects(clients[npc_id].pos_);
+	 Sector.getNearbyObjects(vl, clients[npc_id].pos_);
 	unordered_set<int> new_vl;
 
 	clients[npc_id].vl_.lock();
@@ -930,7 +939,8 @@ void worker_thread(HANDLE h_iocp)
 		case OP_NPC_MOVE: {
 			bool keep_alive = false;
 
-			unordered_set<int> vl = Sector.getNearbyObjects(clients[key].pos_);
+			unordered_set<int> vl;
+			Sector.getNearbyObjects(vl, clients[key].pos_);
 
 			for (int pl : vl) {
 				if (clients[pl].in_use_ == false) continue;
@@ -961,7 +971,8 @@ void worker_thread(HANDLE h_iocp)
 			clients[key].hp_ = clients[key].level_*50;
 			clients[key].damage_ = clients[key].level_*2;
 
-			unordered_set<int> vl = Sector.getNearbyObjects(clients[key].pos_);
+			unordered_set<int> vl;
+			Sector.getNearbyObjects(vl, clients[key].pos_);
 			unordered_set<int> new_vl;
 			
 			for (int pl : vl) {
@@ -1003,7 +1014,8 @@ void worker_thread(HANDLE h_iocp)
 			clients[key].send_login_info_packet();
 			Sector.addObject(clients[key].pos_);
 
-			unordered_set <int> vl = Sector.getNearbyObjects(clients[key].pos_);
+			unordered_set <int> vl;
+			Sector.getNearbyObjects(vl, clients[key].pos_);
 			unordered_set <int> new_vl;
 			for (auto& pl : vl) {
 				if (clients[pl].in_use_ == false) continue;
