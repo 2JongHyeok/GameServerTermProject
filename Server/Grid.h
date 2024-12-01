@@ -5,7 +5,7 @@
 #include <set>
 #include <unordered_set>
 #include <mutex>
-#include <shared_mutex>
+#include <mutex>
 
 
 const int CELL_SIZE = 10;
@@ -14,7 +14,7 @@ class Grid
 {
 private:
     std::vector<std::vector<std::unordered_set<int>>> cells;
-    std::vector<std::vector<std::shared_mutex>> cellMutexes;
+    std::vector<std::vector<std::mutex>> cellMutexes;
     int cols, rows;
 
 public:
