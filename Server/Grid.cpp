@@ -12,7 +12,7 @@ void Grid::addObject(const GameObject& obj) {
     int cellX = obj.x_ / CELL_SIZE;
     int cellY = obj.y_ / CELL_SIZE;
     if (cellX >= 0 && cellX < cols && cellY >= 0 && cellY < rows) {
-        std::unique_lock<std::mutex> lock(cellMutexes[cellY][cellX]);
+        std::lock_guard<std::mutex> lock(cellMutexes[cellY][cellX]);
         cells[cellY][cellX].insert(obj.id_);
     }
 }
@@ -53,11 +53,12 @@ void Grid::getNearbyObjects(std::unordered_set<int> &vl, const GameObject& obj) 
             int nx = cellX + dx;
             int ny = cellY + dy;
             if (nx >= 0 && nx < cols && ny >= 0 && ny < rows) {
-                std::unique_lock<std::mutex> lock(cellMutexes[ny][nx]);
+                std::lock_guard<std::mutex> lock(cellMutexes[ny][nx]);
                 for (int p : cells[ny][nx]) {
                     vl.insert(p);
                 }
             }
         }
     }
+    return;
 }
