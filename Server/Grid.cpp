@@ -1,4 +1,4 @@
-#include "Grid.h"
+﻿#include "Grid.h"
 
 Grid::Grid() : cols(W_WIDTH / CELL_SIZE), rows(W_HEIGHT / CELL_SIZE) {
     cells.resize(rows, std::vector<std::unordered_set<int>>(cols));
@@ -54,7 +54,7 @@ void Grid::getNearbyObjects(std::unordered_set<int> &vl, const GameObject& obj) 
             int ny = cellY + dy;
             if (nx >= 0 && nx < cols && ny >= 0 && ny < rows) {
                 std::shared_lock<std::shared_mutex> lock(cellMutexes[ny][nx]);
-                for (int p : cells[ny][nx]) {
+                for (const int& p : cells[ny][nx]) {
                     vl.insert(p);
                 }
             }

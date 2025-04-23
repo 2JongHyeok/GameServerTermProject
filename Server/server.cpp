@@ -1,4 +1,4 @@
-#include <iostream>
+ï»¿#include <iostream>
 #include <array>
 #include <thread>
 #include <vector>
@@ -42,14 +42,14 @@ concurrency::concurrent_queue<int> db_queue;
 
 void Load_Map_info() {
 	std::ifstream in{ "mymap.txt" };
-	// ÆÄÀÏ ¿­±â ½ÇÆĞ ¿©ºÎ È®ÀÎ
+	// íŒŒì¼ ì—´ê¸° ì‹¤íŒ¨ ì—¬ë¶€ í™•ì¸
 	if (!in) {
-		std::cerr << "ÆÄÀÏÀ» ¿­Áö ¸øÇß½À´Ï´Ù: test1.txt\n";
+		std::cerr << "íŒŒì¼ì„ ì—´ì§€ ëª»í–ˆìŠµë‹ˆë‹¤: test1.txt\n";
 		if (in.fail()) {
-			std::cerr << "¿À·ù: ÆÄÀÏÀ» Ã£À» ¼ö ¾ø½À´Ï´Ù ¶Ç´Â ÆÄÀÏÀ» ¿­ ¼ö ¾ø½À´Ï´Ù.\n";
+			std::cerr << "ì˜¤ë¥˜: íŒŒì¼ì„ ì°¾ì„ ìˆ˜ ì—†ìŠµë‹ˆë‹¤ ë˜ëŠ” íŒŒì¼ì„ ì—´ ìˆ˜ ì—†ìŠµë‹ˆë‹¤.\n";
 		}
 		else {
-			std::cerr << "¾Ë ¼ö ¾ø´Â ¿À·ù°¡ ¹ß»ıÇß½À´Ï´Ù.\n";
+			std::cerr << "ì•Œ ìˆ˜ ì—†ëŠ” ì˜¤ë¥˜ê°€ ë°œìƒí–ˆìŠµë‹ˆë‹¤.\n";
 		}
 
 	}
@@ -342,10 +342,11 @@ void process_packet(int c_id, char* packet)
 		int dir = clients[c_id].dir_;
 
 		unordered_set <int> vl;
+		vl.reserve(50);	// ì£¼ë³€ ì ë“¤ì˜ ì˜ˆìƒ ìµœëŒ€ì¹˜ë¡œ ì§€ì •
 		Sector.getNearbyObjects(vl, clients[c_id].pos_);
 		unordered_set <int> new_vl;
 
-		if (c_class == PRIST) { // Å¬·¡½º È®ÀÎ
+		if (c_class == PRIST) { // í´ë˜ìŠ¤ í™•ì¸
 			for (int pl : vl) {
 				if (clients[pl].in_use_ == false) continue;
 				if (pl == c_id) continue;
@@ -355,10 +356,10 @@ void process_packet(int c_id, char* packet)
 				new_vl.insert(pl);
 			}
 			for (int pl : new_vl) {
-				if (is_npc(pl)) {	// NPCÀÌ¸é °ø°İ
+				if (is_npc(pl)) {	// NPCì´ë©´ ê³µê²©
 
 					bool kill = false;
-					while (true) {	// CAS¸¦ »ç¿ëÇØ Ã¼·Â ¹Ù²ãÁÖ±â
+					while (true) {	// CASë¥¼ ì‚¬ìš©í•´ ì²´ë ¥ ë°”ê¿”ì£¼ê¸°
 						int hp = clients[pl].hp_.load();
 						if (hp <= 0) break;
 						int now_hp = hp - clients[c_id].damage_;
@@ -370,11 +371,11 @@ void process_packet(int c_id, char* packet)
 							break;
 						}
 					}
-					if (kill) {
+					if (kill) {	// ëª¬ìŠ¤í„°ë¥¼ ì£½ì˜€ì„ê²½ìš° ì²˜ë¦¬
 						clients[c_id].exp_ += clients[pl].level_ * 50;
 						TIMER_EVENT ev{ pl, chrono::system_clock::now() + 30s, EV_RESURRECTION, 0 };
 						timer_queue.push(ev);
-						while (true) {	// ·¹º§¾÷ ÇÒ °æ¿ì ½ºÅİ ¹Ù²ãÁÖ±â
+						while (true) {	// ë ˆë²¨ì—… í•  ê²½ìš° ìŠ¤í…Ÿ ë°”ê¿”ì£¼ê¸°
 							if (clients[c_id].exp_ >= clients[c_id].max_exp_) {
 								clients[c_id].exp_ -= clients[c_id].max_exp_;
 								clients[c_id].max_exp_ *= 2;
@@ -385,7 +386,7 @@ void process_packet(int c_id, char* packet)
 								break;
 						}
 						clients[c_id].send_stat_change_packet(c_id, clients[c_id].max_hp_, clients[c_id].hp_, clients[c_id].level_, clients[c_id].exp_);
-						// Á×Àº NPC ½Ã¾ß¿¡¼­ »èÁ¦
+						// ì£½ì€ NPC ì‹œì•¼ì—ì„œ ì‚­ì œ
 
 						unordered_set <int> vl;
 						Sector.getNearbyObjects(vl, clients[pl].pos_);
@@ -419,7 +420,7 @@ void process_packet(int c_id, char* packet)
 
 					}
 				}
-				else {	// ÇÃ·¹ÀÌ¾î¸é Èú
+				else {	// í”Œë ˆì´ì–´ë©´ í
 					if (clients[pl].hp_ < 100) {
 						while (true) {
 							int hp = clients[pl].hp_.load();
@@ -447,7 +448,7 @@ void process_packet(int c_id, char* packet)
 			}
 			for (int pl : new_vl) {
 				bool kill = false;
-				while (true) {	// CAS¸¦ »ç¿ëÇØ Ã¼·Â ¹Ù²ãÁÖ±â
+				while (true) {	// CASë¥¼ ì‚¬ìš©í•´ ì²´ë ¥ ë°”ê¿”ì£¼ê¸°
 
 					int hp = clients[pl].hp_.load();
 					if (hp <= 0) break;
@@ -464,7 +465,7 @@ void process_packet(int c_id, char* packet)
 					clients[c_id].exp_ += clients[pl].level_ * 50;
 					TIMER_EVENT ev{ pl, chrono::system_clock::now() + 30s, EV_RESURRECTION, 0 };
 					timer_queue.push(ev);
-					while (true) {	// ·¹º§¾÷ ÇÒ °æ¿ì ½ºÅİ ¹Ù²ãÁÖ±â
+					while (true) {	// ë ˆë²¨ì—… í•  ê²½ìš° ìŠ¤í…Ÿ ë°”ê¿”ì£¼ê¸°
 						if (clients[c_id].exp_ >= clients[c_id].max_exp_) {
 							clients[c_id].exp_ -= clients[c_id].max_exp_;
 							clients[c_id].max_exp_ *= 2;
@@ -476,7 +477,7 @@ void process_packet(int c_id, char* packet)
 					}
 					clients[c_id].send_stat_change_packet(c_id, clients[c_id].max_hp_, clients[c_id].hp_, clients[c_id].level_, clients[c_id].exp_);
 
-					// Á×Àº NPC ½Ã¾ß¿¡¼­ »èÁ¦
+					// ì£½ì€ NPC ì‹œì•¼ì—ì„œ ì‚­ì œ
 
 					unordered_set <int> vl;
 					Sector.getNearbyObjects(vl, clients[pl].pos_);
@@ -639,9 +640,9 @@ void do_timer()
 				break;
 			}
 			}
-			continue;		// Áï½Ã ´ÙÀ½ ÀÛ¾÷ ²¨³»±â
+			continue;		// ì¦‰ì‹œ ë‹¤ìŒ ì‘ì—… êº¼ë‚´ê¸°
 		}
-		this_thread::sleep_for(1ms);   // timer_queue°¡ ºñ¾î ÀÖÀ¸´Ï Àá½Ã ±â´Ù·È´Ù°¡ ´Ù½Ã ½ÃÀÛ
+		this_thread::sleep_for(1ms);   // timer_queueê°€ ë¹„ì–´ ìˆìœ¼ë‹ˆ ì ì‹œ ê¸°ë‹¤ë ¸ë‹¤ê°€ ë‹¤ì‹œ ì‹œì‘
 	}
 }
 
@@ -831,11 +832,11 @@ void do_npc_random_move(int npc_id)
 
 	for (auto pl : new_vl) {
 		if (0 == old_vl.count(pl)) {
-			// ÇÃ·¹ÀÌ¾îÀÇ ½Ã¾ß¿¡ µîÀå
+			// í”Œë ˆì´ì–´ì˜ ì‹œì•¼ì— ë“±ì¥
 			clients[pl].send_add_object_packet(clients[npc_id].id_);
 		}
 		else {
-			// ÇÃ·¹ÀÌ¾î°¡ °è¼Ó º¸°í ÀÖÀ½.
+			// í”Œë ˆì´ì–´ê°€ ê³„ì† ë³´ê³  ìˆìŒ.
 			clients[pl].send_move_packet(clients[npc_id].id_);
 		}
 	}
@@ -1190,13 +1191,13 @@ void connect_db() {
 }
 int main()
 {
-	printf("¸Ê Á¤º¸ ÁØºñÁß\n");
+	printf("ë§µ ì •ë³´ ì¤€ë¹„ì¤‘\n");
 	Load_Map_info();
-	printf("¸Ê Á¤º¸ ÁØºñ¿Ï·á\n");
+	printf("ë§µ ì •ë³´ ì¤€ë¹„ì™„ë£Œ\n");
 
-	printf("¸ó½ºÅÍ Á¤º¸ ÁØºñÁß\n");
+	printf("ëª¬ìŠ¤í„° ì •ë³´ ì¤€ë¹„ì¤‘\n");
 	InitializeNPC();
-	printf("¸ó½ºÅÍ Á¤º¸ ÁØºñ¿Ï·á\n");
+	printf("ëª¬ìŠ¤í„° ì •ë³´ ì¤€ë¹„ì™„ë£Œ\n");
 
 	WSADATA WSAData;
 	WSAStartup(MAKEWORD(2, 2), &WSAData);
@@ -1214,7 +1215,7 @@ int main()
 	CreateIoCompletionPort(reinterpret_cast<HANDLE>(g_s_socket), h_iocp, 9999, 0);
 	g_c_socket = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 	g_a_over.comp_type_ = OP_ACCEPT;
-	printf("¼­¹ö ½ÃÀÛ\n");
+	printf("ì„œë²„ ì‹œì‘\n");
 	AcceptEx(g_s_socket, g_c_socket, g_a_over.send_buf_, 0, addr_size + 16, addr_size + 16, 0, &g_a_over.over_);
 
 	vector <thread> worker_threads;
