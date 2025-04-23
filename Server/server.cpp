@@ -345,6 +345,7 @@ void process_packet(int c_id, char* packet)
 		vl.reserve(50);	// 주변 적들의 예상 최대치로 지정
 		Sector.getNearbyObjects(vl, clients[c_id].pos_);
 		unordered_set <int> new_vl;
+		new_vl.reserve(20);
 
 		if (c_class == PRIST) { // 클래스 확인
 			for (int pl : vl) {
