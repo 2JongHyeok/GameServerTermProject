@@ -1,30 +1,38 @@
-Ôªø#include <iostream>
+#include <iostream>
 #include <array>
+#include <WS2tcpip.h>
+#include <MSWSock.h>
 #include <thread>
 #include <vector>
-#include <set>
 #include <mutex>
-#include <concurrent_unordered_set.h>
 #include <unordered_set>
 #include <concurrent_unordered_map.h>
 #include <fstream>
 #include <concurrent_priority_queue.h>
-#include <concurrent_queue.h>
-
+#include <string>
 #include "protocol.h"
-#include "Grid.h"
-#include "SESSION.h"
+
+#include "include/lua.hpp"
+
+#pragma comment(lib, "WS2_32.lib")
+#pragma comment(lib, "MSWSock.lib")
+#pragma comment(lib, "lua54.lib")
 
 using namespace std;
 constexpr int map_count = 24;
-
 char my_map[W_HEIGHT][W_WIDTH];
-Grid Sector;
 
 constexpr int VIEW_RANGE = 7;
-constexpr int NPC_VIEW_RANGE = 5;
+
+constexpr int WARRIOR_STAT_ATK = 10;
+constexpr int WARRIOR_STAT_ARMOR = 10;
+constexpr int MAGE_STAT_ATK = 20;
+constexpr int MAGE_STAT_ARMOR = 1;
+constexpr int PRIST_STAT_ATK = 5;
+constexpr int PRIST_STAT_ARMOR = 5;
 
 constexpr int SECTOR_SIZE = 20;
+concurrency::concurrent_unordered_map<int, int > Sector;
 
 enum EVENT_TYPE { EV_RANDOM_MOVE, EV_RESURRECTION, EV_ATTACK};
 struct TIMER_EVENT {
@@ -38,53 +46,225 @@ struct TIMER_EVENT {
 	}
 };
 concurrency::concurrent_priority_queue<TIMER_EVENT> timer_queue;
-concurrency::concurrent_queue<int> db_queue;
 
-void Load_Map_info() {
-	std::ifstream in{ "mymap.txt" };
-	// ÌååÏùº Ïó¥Í∏∞ Ïã§Ìå® Ïó¨Î∂Ä ÌôïÏù∏
-	if (!in) {
-		std::cerr << "ÌååÏùºÏùÑ Ïó¥ÏßÄ Î™ªÌñàÏäµÎãàÎã§: test1.txt\n";
-		if (in.fail()) {
-			std::cerr << "Ïò§Î•ò: ÌååÏùºÏùÑ Ï∞æÏùÑ Ïàò ÏóÜÏäµÎãàÎã§ ÎòêÎäî ÌååÏùºÏùÑ Ïó¥ Ïàò ÏóÜÏäµÎãàÎã§.\n";
-		}
-		else {
-			std::cerr << "Ïïå Ïàò ÏóÜÎäî Ïò§Î•òÍ∞Ä Î∞úÏÉùÌñàÏäµÎãàÎã§.\n";
-		}
-
+constexpr int BUF_SIZE = 1024;
+class map_loader {
+public:
+	map_loader() {
 	}
-	int index_x = 0;
-	int index_y = 0;
-	char temp;
-	string sinteger = "";
-	int count = 0;
-	while (in >> temp) {
-		if (temp == ',') {
-			int integer = stoi(sinteger);
-			my_map[index_y][index_x++] = integer;
-			sinteger = "";
-			if (index_x == 2000) {
-				index_y++;
-				index_x = 0;
+
+	void Load_Map_info() {
+
+		std::ifstream in{ "mymap.txt" };
+		// ∆ƒ¿œ ø≠±‚ Ω«∆– ø©∫Œ »Æ¿Œ
+		if (!in) {
+			std::cerr << "∆ƒ¿œ¿ª ø≠¡ˆ ∏¯«ﬂΩ¿¥œ¥Ÿ: test1.txt\n";
+			if (in.fail()) {
+				std::cerr << "ø¿∑˘: ∆ƒ¿œ¿ª √£¿ª ºˆ æ¯Ω¿¥œ¥Ÿ ∂«¥¬ ∆ƒ¿œ¿ª ø≠ ºˆ æ¯Ω¿¥œ¥Ÿ.\n";
 			}
-			continue;
-		}
-		sinteger += temp;
-	}
-}
+			else {
+				std::cerr << "æÀ ºˆ æ¯¥¬ ø¿∑˘∞° πﬂª˝«ﬂΩ¿¥œ¥Ÿ.\n";
+			}
 
+		}
+		int index_x = 0;
+		int index_y = 0;
+		char temp;
+		string sinteger = "";
+		int count = 0;
+		while (in >> temp) {
+			if (temp == ',') {
+				int integer = stoi(sinteger);
+				my_map[index_y][index_x++] = integer;
+				sinteger = "";
+				if (index_x == 2000) {
+					index_y++;
+					index_x = 0;
+				}
+				continue;
+			}
+			sinteger += temp;
+		}
+	}
+};
+
+enum COMP_TYPE { OP_ACCEPT, OP_RECV, OP_SEND, OP_NPC_MOVE,  OP_NPC_RESURRECTION, OP_NPC_ATTACK};
+class OVER_EXP {
+public:
+	WSAOVERLAPPED over_;
+	WSABUF wsabuf_;
+	char send_buf_[BUF_SIZE];
+	COMP_TYPE comp_type_;
+	int ai_target_obj_;
+	OVER_EXP()
+	{
+		wsabuf_.len = BUF_SIZE;
+		wsabuf_.buf = send_buf_;
+		comp_type_ = OP_RECV;
+		ZeroMemory(&over_, sizeof(over_));
+	}
+	OVER_EXP(char* packet)
+	{
+		wsabuf_.len = packet[0];
+		wsabuf_.buf = send_buf_;
+		ZeroMemory(&over_, sizeof(over_));
+		comp_type_ = OP_SEND;
+		memcpy(send_buf_, packet, packet[0]);
+	}
+};
+
+enum S_STATE { ST_FREE, ST_ALLOC, ST_INGAME };
+class SESSION {
+	OVER_EXP recv_over_;
+
+public:
+	mutex s_lock_;
+	S_STATE state_;
+	atomic_bool	is_active_;		
+	int id_;
+	SOCKET socket_;
+	short	x_, y_;
+	short	first_x_,first_y_;
+	char	name_[NAME_SIZE];
+	unordered_set <int> view_list_;
+	mutex	vl_;
+	int		prev_remain_;
+	unsigned int		last_move_time_;
+	int		visual_;
+	int		hp_;
+	int		max_hp_;
+	int		exp_;
+	int		max_exp_;
+	int		level_;
+	mutex	ll_;
+	lua_State* L_;
+	int		prev_sector_;
+	int		now_sector_;
+	bool	in_use_;
+	int		dir_;
+	int		damage_;
+	int		armor_;
+
+
+public:
+	SESSION()
+	{
+		id_ = -1;
+		socket_ = 0;
+		x_ = y_ = 0;
+		name_[0] = 0;
+		state_ = ST_FREE;
+		prev_remain_ = 0;
+		in_use_ = true;
+		level_ = 1;
+		max_hp_ = 100;
+		hp_ = max_hp_; 
+		max_exp_ = 100;
+	}
+
+	~SESSION() {}
+
+	void do_recv()
+	{
+		DWORD recv_flag = 0;
+		memset(&recv_over_.over_, 0, sizeof(recv_over_.over_));
+		recv_over_.wsabuf_.len = BUF_SIZE - prev_remain_;
+		recv_over_.wsabuf_.buf = recv_over_.send_buf_ + prev_remain_;
+		WSARecv(socket_, &recv_over_.wsabuf_, 1, 0, &recv_flag,
+			&recv_over_.over_, 0);
+	}
+
+	void do_send(void* packet)
+	{
+		OVER_EXP* sdata = new OVER_EXP{ reinterpret_cast<char*>(packet) };
+		WSASend(socket_, &sdata->wsabuf_, 1, 0, 0, &sdata->over_, 0);
+	}
+	void send_login_info_packet()
+	{
+		SC_LOGIN_INFO_PACKET p;
+		p.size = sizeof(SC_LOGIN_INFO_PACKET);
+		p.type = SC_LOGIN_INFO;
+		p.visual = visual_;
+		p.id = id_;
+		p.hp = hp_;
+		p.max_hp = max_hp_;
+		p.exp = exp_;
+		p.level = level_;
+		p.x = x_;
+		p.y = y_;
+		do_send(&p);
+	}
+	void send_move_packet(int c_id);
+	void send_add_object_packet(int c_id);
+	void send_remove_player_packet(int c_id)
+	{
+		vl_.lock();
+		if (view_list_.count(c_id))
+			view_list_.erase(c_id);
+		else {
+			vl_.unlock();
+			return;
+		}
+		vl_.unlock();
+		SC_REMOVE_OBJECT_PACKET p;
+		p.size = sizeof(p);
+		p.type = SC_REMOVE_OBJECT;
+		p.id = c_id;
+		do_send(&p);
+	}
+	void send_chat_packet(int p_id, const char* mess);
+	void send_stat_change_packet(int c_id, int max_hp,  int hp, int level, int exp) {
+		SC_STAT_CHANGE_PACKET p;
+		p.size = sizeof(p);
+		p.type = SC_STAT_CHANGE;
+		p.id = c_id;
+		p.max_hp = max_hp;
+		p.level = level;
+		p.exp = exp;
+		p.hp = hp;
+		do_send(&p);
+	}
+	void update_status() {
+		hp_ = 100;
+		if (visual_ == 0) {
+			damage_ = level_ * WARRIOR_STAT_ATK;
+			armor_ = level_ * WARRIOR_STAT_ARMOR;
+		}
+		else if (visual_ == 1) {
+			damage_ = level_ * MAGE_STAT_ATK;
+			armor_ = level_ * MAGE_STAT_ARMOR;
+		}
+		else if (visual_ == 2) {
+			damage_ = level_ * PRIST_STAT_ATK;
+			armor_ = level_ * PRIST_STAT_ARMOR;
+		}
+	}
+};
+array<SESSION, MAX_USER+MAX_NPC> clients;
 HANDLE h_iocp;
 SOCKET g_s_socket, g_c_socket;
 OVER_EXP g_a_over;
 
+bool in_near_sector(int my_sector,int targer_sector) {
+	if (my_sector +99 == targer_sector)return true;
+	if (my_sector +100 == targer_sector)return true;
+	if (my_sector +101 == targer_sector)return true;
+	if (my_sector - 1 == targer_sector)return true;
+	if (my_sector == targer_sector) return true;
+	if (my_sector + 1 == targer_sector)return true;
+	if (my_sector -101 == targer_sector)return true;
+	if (my_sector -100 == targer_sector)return true;
+	if (my_sector - 99 == targer_sector)return true;
+	return false;
+}
 enum ATTACK_TYPE { AUTO, SKILL1, SKILL2 };
 
-bool in_my_attack_range(int target, int player, C_CLASS c_class, ATTACK_TYPE attack_type, int dir) {
-	int t_x = clients[target].pos_.x_.load();
-	int t_y = clients[target].pos_.y_.load();
-	int p_x = clients[player].pos_.x_.load();
-	int p_y = clients[player].pos_.y_.load();
-	if (c_class == WARRIOR) {
+bool in_my_attack_range(int target, int player, int visual, ATTACK_TYPE attack_type, int dir) {
+	int t_x = clients[target].x_;
+	int t_y = clients[target].y_;
+	int p_x = clients[player].x_;
+	int p_y = clients[player].y_;
+	if (visual == 0) {
 		switch (attack_type)
 		{
 		case AUTO:
@@ -126,7 +306,7 @@ bool in_my_attack_range(int target, int player, C_CLASS c_class, ATTACK_TYPE att
 			break;
 		}
 	}
-	else if (c_class == MAGE) {
+	else if (visual == 1) {
 		switch (attack_type)
 		{
 		case AUTO:
@@ -168,7 +348,7 @@ bool in_my_attack_range(int target, int player, C_CLASS c_class, ATTACK_TYPE att
 			break;
 		}
 	}
-	else if (c_class == PRIST) {
+	else if (visual == 2) {
 		switch (attack_type)
 		{
 		case AUTO:
@@ -194,24 +374,18 @@ bool is_npc(int object_id)
 	return !is_pc(object_id);
 }
 
-bool can_see(int a, int b)
+bool can_see(int from, int to)
 {
-	if (std::abs(clients[a].pos_.x_.load() - clients[b].pos_.x_.load()) > VIEW_RANGE) return false;
-	return std::abs(clients[a].pos_.y_.load() - clients[b].pos_.y_.load()) <= VIEW_RANGE;
-}
-
-bool can_npc_see(int a, int b)
-{
-	if (std::abs(clients[a].pos_.x_.load() - clients[b].pos_.x_.load()) > NPC_VIEW_RANGE) return false;
-	return std::abs(clients[a].pos_.y_.load() - clients[b].pos_.y_.load()) <= NPC_VIEW_RANGE;
+	if (abs(clients[from].x_ - clients[to].x_) > VIEW_RANGE) return false;
+	return abs(clients[from].y_ - clients[to].y_) <= VIEW_RANGE;
 }
 bool can_see_d(int from, int to, int* distance)
 {
-	if (abs(clients[from].pos_.x_ - clients[to].pos_.x_) > NPC_VIEW_RANGE) return false;
-	if (abs(clients[from].pos_.y_ - clients[to].pos_.y_) <= NPC_VIEW_RANGE) {
-		*distance = abs(clients[from].pos_.x_ - clients[to].pos_.x_);
-		if (*distance < abs(clients[from].pos_.y_ - clients[to].pos_.y_))
-			*distance = abs(clients[from].pos_.y_ - clients[to].pos_.y_);
+	if (abs(clients[from].x_ - clients[to].x_) > VIEW_RANGE) return false;
+	if (abs(clients[from].y_ - clients[to].y_) <= VIEW_RANGE) {
+		*distance = abs(clients[from].x_ - clients[to].x_);
+		if (*distance > abs(clients[from].y_ - clients[to].y_))
+			*distance = abs(clients[from].y_ - clients[to].y_);
 		return true;
 	}
 	return false;
@@ -219,19 +393,56 @@ bool can_see_d(int from, int to, int* distance)
 }
 
 
-void get_new_client_id(int& id)
+void SESSION::send_move_packet(int c_id)
+{
+	SC_MOVE_OBJECT_PACKET p;
+	p.size = sizeof(SC_MOVE_OBJECT_PACKET);
+	p.type = SC_MOVE_OBJECT;
+	p.id = c_id;
+	p.x = clients[c_id].x_;
+	p.y = clients[c_id].y_;
+	p.move_time = clients[c_id].last_move_time_;
+	do_send(&p);
+}
+
+void SESSION::send_add_object_packet(int c_id)
+{
+	SC_ADD_OBJECT_PACKET add_packet;
+	add_packet.size = sizeof(SC_ADD_OBJECT_PACKET);
+	add_packet.type = SC_ADD_OBJECT;
+	add_packet.id = c_id;
+	add_packet.hp = clients[c_id].hp_;
+	add_packet.visual = clients[c_id].visual_;
+	strcpy_s(add_packet.name, clients[c_id].name_);
+	add_packet.x = clients[c_id].x_;
+	add_packet.y = clients[c_id].y_;
+	vl_.lock();
+	view_list_.insert(c_id);
+	vl_.unlock();
+	do_send(&add_packet);
+}
+
+void SESSION::send_chat_packet(int p_id, const char* mess)
+{
+	SC_CHAT_PACKET packet;
+	packet.id = p_id;
+	packet.size = sizeof(packet);
+	packet.type = SC_CHAT;
+	strcpy_s(packet.mess, mess);
+	do_send(&packet);
+}
+
+int get_new_client_id()
 {
 	for (int i = 0; i < MAX_USER; ++i) {
 		lock_guard <mutex> ll{ clients[i].s_lock_ };
-		if (clients[i].state_ == ST_FREE) {
-			clients[i].state_ = ST_ALLOC;
-			id = i;
-			return;
-		}
+		if (clients[i].state_ == ST_FREE)
+			return i;
 	}
+	return -1;
 }
 
-void WakeUpNPC(int npc_id)
+void WakeUpNPC(int npc_id, int waker)
 {
 	if (clients[npc_id].is_active_) return;
 	bool old_state = false;
@@ -246,19 +457,64 @@ void process_packet(int c_id, char* packet)
 	switch (packet[2]) {
 	case CS_LOGIN: {
 		CS_LOGIN_PACKET* p = reinterpret_cast<CS_LOGIN_PACKET*>(packet);
-		clients[c_id].login_id_ = p->id;
+		clients[c_id].in_use_ = true;
 		strcpy_s(clients[c_id].name_, p->name);
-		clients[c_id].db_state_ = 1;
-		db_queue.push(c_id);
+		{
+			lock_guard<mutex> ll{ clients[c_id].s_lock_};
+			clients[c_id].x_ = rand() % W_WIDTH;
+			clients[c_id].y_ = rand() % W_HEIGHT;
+			clients[c_id].first_x_ = clients[c_id].x_;
+			clients[c_id].first_y_ = clients[c_id].y_;
+			clients[c_id].level_ = 1;
+			int visual = rand() % 3;
+			clients[c_id].visual_ = visual;
+			if (visual == 0) {
+				clients[c_id].damage_ = WARRIOR_STAT_ATK * clients[c_id].level_;
+				clients[c_id].armor_ = WARRIOR_STAT_ARMOR * clients[c_id].level_;
+			}
+			else if (visual == 1) {
+				clients[c_id].damage_ = MAGE_STAT_ATK * clients[c_id].level_;
+				clients[c_id].armor_ = MAGE_STAT_ARMOR * clients[c_id].level_;
+			}
+			else if (visual == 2) {
+				clients[c_id].damage_ = PRIST_STAT_ATK * clients[c_id].level_;
+				clients[c_id].armor_ = PRIST_STAT_ARMOR * clients[c_id].level_;
+			}
+			clients[c_id].state_ = ST_INGAME;
+		}
+		clients[c_id].send_login_info_packet();
+		clients[c_id].prev_sector_ = clients[c_id].x_ / SECTOR_SIZE + clients[c_id].y_ / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
+		clients[c_id].now_sector_ = clients[c_id].prev_sector_;
+		int my_sector = clients[c_id].now_sector_;
+		Sector[c_id]= my_sector;
+		for (auto& pl : Sector) {
+			if (clients[pl.first].in_use_ == false) continue;
+			if (!in_near_sector(my_sector, pl.second)) continue;
+			{
+				lock_guard<mutex> ll(clients[pl.first].s_lock_);
+				if (ST_INGAME != clients[pl.first].state_) continue;
+			}
+			if (clients[pl.first].id_ == c_id) continue;
+			if (false == can_see(c_id, pl.first))
+				continue;
+			if (is_pc(pl.first)) clients[pl.first].send_add_object_packet(c_id);
+			else WakeUpNPC(pl.first, c_id);
+			clients[c_id].send_add_object_packet(pl.first);
+		}
 		break;
 	}
 	case CS_MOVE: {
 		CS_MOVE_PACKET* p = reinterpret_cast<CS_MOVE_PACKET*>(packet);
 		clients[c_id].last_move_time_ = p->move_time;
 		clients[c_id].dir_ = p->direction;
-		int x = clients[c_id].pos_.x_.load();
-		int y = clients[c_id].pos_.y_.load();
-
+		short x = clients[c_id].x_;
+		short y = clients[c_id].y_;
+		clients[c_id].prev_sector_ = clients[c_id].now_sector_;
+		clients[c_id].now_sector_ = x / SECTOR_SIZE + y / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
+		if (clients[c_id].prev_sector_ != clients[c_id].now_sector_) {
+			Sector[c_id] =  clients[c_id].now_sector_;
+		}
+		int my_sector = clients[c_id].now_sector_;
 		switch (p->direction) {
 		case 0: {
 			if (y <= 0) break;
@@ -285,28 +541,26 @@ void process_packet(int c_id, char* packet)
 			break; 
 		}
 		}
-		Sector.updateObject(clients[c_id].pos_, x, y);
-		clients[c_id].pos_.x_.store(x);
-		clients[c_id].pos_.y_.store(y);
+		clients[c_id].x_ = x;
+		clients[c_id].y_ = y;
 
-		
+		unordered_set<int> near_list;
 		clients[c_id].vl_.lock();
-		unordered_set<int> old_vl = clients[c_id].view_list_;
+		unordered_set<int> old_vlist = clients[c_id].view_list_;
 		clients[c_id].vl_.unlock();
-		unordered_set <int> vl;
-		Sector.getNearbyObjects(vl, clients[c_id].pos_);
-		unordered_set <int> new_vl;
-		for (int pl : vl) {
-			if (clients[pl].in_use_ == false) continue;
-			if (pl == c_id) continue;
-			if (clients[pl].state_ != ST_INGAME) continue;
-			if (false == can_see(pl, c_id)) continue;
-			new_vl.insert(pl);
+
+		for (auto& cl : Sector) {
+			if (clients[cl.first].in_use_ == false) continue;
+			if (!in_near_sector(my_sector,cl.second)) continue;
+			if (clients[cl.first].state_ != ST_INGAME) continue;
+			if (clients[cl.first].id_ == c_id) continue;
+			if (can_see(c_id, clients[cl.first].id_))
+				near_list.insert(clients[cl.first].id_);
 		}
 
 		clients[c_id].send_move_packet(c_id);
 
-		for (int  pl : new_vl) {
+		for (auto& pl : near_list) {
 			auto& cpl = clients[pl];
 			if (is_pc(pl)) {
 				cpl.vl_.lock();
@@ -319,255 +573,123 @@ void process_packet(int c_id, char* packet)
 					clients[pl].send_add_object_packet(c_id);
 				}
 			}
-			else WakeUpNPC(pl);
+			else WakeUpNPC(pl, c_id);
 
-			if (old_vl.count(pl) == 0)
+			if (old_vlist.count(pl) == 0)
 				clients[c_id].send_add_object_packet(pl);
 		}
 
-		for (auto& pl : old_vl) {
-			if (0 == new_vl.count(pl)) {
+		for (auto& pl : old_vlist) {
+			if (0 == near_list.count(pl)) {
 				clients[c_id].send_remove_player_packet(pl);
 				if (is_pc(pl))
 					clients[pl].send_remove_player_packet(c_id);
 			}
 		}
-		clients[c_id].vl_.lock();
-		clients[c_id].view_list_ = new_vl;
-		clients[c_id].vl_.unlock();
 		break;
 	}
 	case CS_ATTACK: {
-		C_CLASS c_class = clients[c_id].character_;
+		int visual = clients[c_id].visual_;
 		int dir = clients[c_id].dir_;
+		clients[c_id].vl_.lock();
+		unordered_set<int> old_vlist = clients[c_id].view_list_;
+		clients[c_id].vl_.unlock();
+		int my_sector = clients[c_id].now_sector_;
 
-		unordered_set <int> vl;
-		vl.reserve(50);	// Ï£ºÎ≥Ä Ï†ÅÎì§Ïùò ÏòàÏÉÅ ÏµúÎåÄÏπòÎ°ú ÏßÄÏ†ï
-		Sector.getNearbyObjects(vl, clients[c_id].pos_);
-		unordered_set <int> new_vl;
-		new_vl.reserve(20);
-
-		if (c_class == PRIST) { // ÌÅ¥ÎûòÏä§ ÌôïÏù∏
-			for (int pl : vl) {
-				if (clients[pl].in_use_ == false) continue;
-				if (pl == c_id) continue;
-				if (clients[pl].state_ != ST_INGAME) continue;
-				if (false == can_see(pl, c_id)) continue;
-				if (!in_my_attack_range(pl, c_id, c_class, AUTO, dir)) continue;
-				new_vl.insert(pl);
+		for (auto& pl : old_vlist) {
+			if (clients[pl].in_use_ == false) continue;
+			if (visual != 2) {
+				if (is_pc(pl)) continue;
+				if (!in_my_attack_range(pl, c_id, visual, AUTO, dir)) continue;
+				clients[pl].hp_ -= clients[c_id].damage_;
 			}
-			for (int pl : new_vl) {
-				if (is_npc(pl)) {	// NPCÏù¥Î©¥ Í≥µÍ≤©
+			else if (visual == 2) {
+				if (!in_my_attack_range(pl, c_id, visual, AUTO, dir)) continue;
+				if (is_pc(pl)) {
+					clients[pl].hp_ += clients[c_id].damage_;
+					clients[pl].send_stat_change_packet(pl,clients[pl].max_hp_, clients[pl].hp_,
+						clients[pl].level_, clients[pl].exp_);
+					continue;
+				}
+				else {
+					clients[pl].hp_ -= clients[c_id].damage_;
+				}
+			}
 
-					bool kill = false;
-					while (true) {	// CASÎ•º ÏÇ¨Ïö©Ìï¥ Ï≤¥Î†• Î∞îÍøîÏ£ºÍ∏∞
-						int hp = clients[pl].hp_.load();
-						if (hp <= 0) break;
-						int now_hp = hp - clients[c_id].damage_;
-						if (std::atomic_compare_exchange_strong(&clients[pl].hp_, &hp, now_hp)) {
-							if (hp > 0 && now_hp <= 0) {
-								clients[pl].in_use_ = false;
-								kill = true;
-							}
-							break;
-						}
-					}
-					if (kill) {	// Î™¨Ïä§ÌÑ∞Î•º Ï£ΩÏòÄÏùÑÍ≤ΩÏö∞ Ï≤òÎ¶¨
-						clients[c_id].exp_ += clients[pl].level_ * 50;
-						TIMER_EVENT ev{ pl, chrono::system_clock::now() + 30s, EV_RESURRECTION, 0 };
-						timer_queue.push(ev);
-						while (true) {	// Î†àÎ≤®ÏóÖ Ìï† Í≤ΩÏö∞ Ïä§ÌÖü Î∞îÍøîÏ£ºÍ∏∞
-							if (clients[c_id].exp_ >= clients[c_id].max_exp_) {
-								clients[c_id].exp_ -= clients[c_id].max_exp_;
-								clients[c_id].max_exp_ *= 2;
-								clients[c_id].level_ += 1;
-								clients[c_id].update_status();
-							}
-							else
-								break;
-						}
-						clients[c_id].send_stat_change_packet(c_id, clients[c_id].max_hp_, clients[c_id].hp_, clients[c_id].level_, clients[c_id].exp_);
-						// Ï£ΩÏùÄ NPC ÏãúÏïºÏóêÏÑú ÏÇ≠Ï†ú
-
-						unordered_set <int> vl;
-						Sector.getNearbyObjects(vl, clients[pl].pos_);
-						unordered_set <int> new_vl;
-						for (int pll : vl) {
-							if (clients[pll].in_use_ == false) continue;
-							if (pll == pl) continue;
-							if (clients[pll].state_ != ST_INGAME) continue;
-							if (false == can_see(pll, pl)) continue;
-							new_vl.insert(pll);
-						}
-						for (int pll : new_vl) {
-							clients[pll].send_remove_player_packet(pl);
-						}
+			if (clients[pl].hp_ <= 0) {
+				clients[pl].in_use_ = false;
+				TIMER_EVENT ev{ pl, chrono::system_clock::now() + 30s, EV_RESURRECTION, 0 };
+				timer_queue.push(ev);
+				clients[c_id].exp_ += clients[pl].level_* 50;
+				while (true) {
+					if (clients[c_id].exp_ >= clients[c_id].max_exp_) {
+						clients[c_id].exp_ -= clients[c_id].max_exp_;
+						clients[c_id].max_exp_ *= 2;
+						clients[c_id].level_ += 1;
+						clients[c_id].update_status();
+						clients[c_id].send_stat_change_packet(c_id, clients[c_id].max_hp_,
+							clients[c_id].hp_, clients[c_id].level_, clients[c_id].exp_);
 					}
 					else {
-						unordered_set <int> vl;
-						Sector.getNearbyObjects(vl, clients[pl].pos_);
-						unordered_set <int> new_vl;
-						for (int pll : vl) {
-							if (clients[pll].in_use_ == false) continue;
-							if (pll == pl) continue;
-							if (clients[pll].state_ != ST_INGAME) continue;
-							if (false == can_see(pll, pl)) continue;
-							new_vl.insert(pll);
-						}
-						for (int pll : new_vl) {
-							clients[pll].send_stat_change_packet(pl, clients[pl].max_hp_,
-								clients[pl].hp_, clients[pl].level_, clients[pl].exp_);
-						}
-
-					}
-				}
-				else {	// ÌîåÎ†àÏù¥Ïñ¥Î©¥ Ìûê
-					if (clients[pl].hp_ < 100) {
-						while (true) {
-							int hp = clients[pl].hp_.load();
-							int now_hp = hp + clients[c_id].damage_;
-							if (now_hp >= 100)
-								now_hp = 100;
-							if (std::atomic_compare_exchange_strong(&clients[pl].hp_, &hp, now_hp)) {
-								break;
-							}
-						}
-						clients[pl].send_stat_change_packet(pl, clients[pl].max_hp_, clients[pl].hp_, clients[pl].level_, clients[pl].exp_);
-					}
-				}
-			}
-		}
-		else {
-			for (int pl : vl) {
-				if (clients[pl].in_use_ == false) continue;
-				if (pl == c_id) continue;
-				if (clients[pl].state_ != ST_INGAME) continue;
-				if (false == can_see(pl, c_id)) continue;
-				if (!is_npc(pl))continue;
-				if (!in_my_attack_range(pl, c_id, c_class, AUTO, dir)) continue;
-				new_vl.insert(pl);
-			}
-			for (int pl : new_vl) {
-				bool kill = false;
-				while (true) {	// CASÎ•º ÏÇ¨Ïö©Ìï¥ Ï≤¥Î†• Î∞îÍøîÏ£ºÍ∏∞
-
-					int hp = clients[pl].hp_.load();
-					if (hp <= 0) break;
-					int now_hp = hp - clients[c_id].damage_;
-					if (std::atomic_compare_exchange_strong(&clients[pl].hp_, &hp, now_hp)) {
-						if (hp > 0 && now_hp <= 0) {
-							clients[pl].in_use_ = false;
-							kill = true;
-						}
+						clients[c_id].send_stat_change_packet(c_id, clients[c_id].max_hp_,
+							clients[c_id].hp_, clients[c_id].level_, clients[c_id].exp_);
 						break;
 					}
 				}
-				if (kill) {
-					clients[c_id].exp_ += clients[pl].level_ * 50;
-					TIMER_EVENT ev{ pl, chrono::system_clock::now() + 30s, EV_RESURRECTION, 0 };
-					timer_queue.push(ev);
-					while (true) {	// Î†àÎ≤®ÏóÖ Ìï† Í≤ΩÏö∞ Ïä§ÌÖü Î∞îÍøîÏ£ºÍ∏∞
-						if (clients[c_id].exp_ >= clients[c_id].max_exp_) {
-							clients[c_id].exp_ -= clients[c_id].max_exp_;
-							clients[c_id].max_exp_ *= 2;
-							clients[c_id].level_ += 1;
-							clients[c_id].update_status();
-						}
-						else
-							break;
-					}
-					clients[c_id].send_stat_change_packet(c_id, clients[c_id].max_hp_, clients[c_id].hp_, clients[c_id].level_, clients[c_id].exp_);
-
-					// Ï£ΩÏùÄ NPC ÏãúÏïºÏóêÏÑú ÏÇ≠Ï†ú
-
-					unordered_set <int> vl;
-					Sector.getNearbyObjects(vl, clients[pl].pos_);
-					unordered_set <int> new_vl;
-					for (int pll : vl) {
-						if (clients[pll].in_use_ == false) continue;
-						if (pll == pl) continue;
-						if (clients[pll].state_ != ST_INGAME) continue;
-						if (false == can_see(pll, pl)) continue;
-						new_vl.insert(pll);
-					}
-					for (int pll : new_vl) {
-						clients[pll].send_remove_player_packet(pl);
-					}
+				
+			}
+			for (auto& ppl : Sector) {
+				if (clients[ppl.first].in_use_ == false) continue;
+				if (!in_near_sector(my_sector, ppl.second)) continue;
+				{
+					lock_guard<mutex> ll(clients[ppl.first].s_lock_);
+					if (ST_INGAME != clients[ppl.first].state_) continue;
+				}
+				if (!is_pc(ppl.first)) continue;
+				if (clients[pl].hp_ <= 0) {
+					clients[ppl.first].send_remove_player_packet(clients[pl].id_);
 				}
 				else {
-					unordered_set <int> vl;
-					Sector.getNearbyObjects(vl, clients[pl].pos_);
-					unordered_set <int> new_vl;
-					for (int pll : vl) {
-						if (clients[pll].in_use_ == false) continue;
-						if (pll == pl) continue;
-						if (clients[pll].state_ != ST_INGAME) continue;
-						if (false == can_see(pll, pl)) continue;
-						new_vl.insert(pll);
-					}
-					for (int pll : new_vl) {
-						clients[pll].send_stat_change_packet(pl, clients[pl].max_hp_,
-							clients[pl].hp_, clients[pl].level_, clients[pl].exp_);
-					}
-					
+					clients[ppl.first].send_stat_change_packet(pl, clients[pl].max_hp_,
+						clients[pl].hp_, clients[pl].level_, clients[pl].exp_);
 				}
 			}
 		}
 		break;
 	}
-	case CS_TELEPORT: {
-		int x, y;
-		while (true) {
-			x = rand() % W_WIDTH;
-			y = rand() % W_HEIGHT;
-			if (my_map[y][x] == 50)
-				break;
-		}
-		Sector.updateObject(clients[c_id].pos_, x, y);
-		clients[c_id].pos_.x_.store(x);
-		clients[c_id].pos_.y_.store(y);
-		clients[c_id].respawn_x_ = x;
-		clients[c_id].respawn_y_ = y;
-		clients[c_id].send_move_packet(c_id);
-
-		clients[c_id].vl_.lock();
-		unordered_set<int> old_vl = clients[c_id].view_list_;
-		clients[c_id].vl_.unlock();
-
-		unordered_set <int> vl;
-		Sector.getNearbyObjects(vl, clients[c_id].pos_);
-		unordered_set <int> new_vl;
-		for (int pl : vl) {
-			if (clients[pl].in_use_ == false) continue;
-			if (pl == c_id) continue;
-			if (clients[pl].state_ != ST_INGAME) continue;
-			if (false == can_see(pl, c_id)) continue;
-			new_vl.insert(pl);
-		}
-
-		for (int pl : new_vl) {
-			if (clients[pl].in_use_ == false) continue;
-			if (clients[pl].id_ == c_id) continue;
-			if (false == can_see(c_id, pl))
-				continue;
-			if (is_pc(pl)) clients[pl].send_add_object_packet(c_id);
-			else WakeUpNPC(pl);
-			clients[c_id].send_add_object_packet(pl);
-		}
-
-		for (int pl : old_vl) {
-			if (0 == new_vl.count(pl)) {
-				clients[c_id].send_remove_player_packet(pl);
-				if (is_pc(pl))
-					clients[pl].send_remove_player_packet(c_id);
-			}
-		}
-
-		clients[c_id].vl_.lock();
-		clients[c_id].view_list_ = new_vl;
-		clients[c_id].vl_.unlock();
 	}
-	}
+}
+
+int API_get_x(lua_State* L)
+{
+	int user_id =
+		(int)lua_tointeger(L, -1);
+	lua_pop(L, 2);
+	int x = clients[user_id].x_;
+	lua_pushnumber(L, x);
+	return 1;
+}
+
+int API_get_y(lua_State* L)
+{
+	int user_id =
+		(int)lua_tointeger(L, -1);
+	lua_pop(L, 2);
+	int y = clients[user_id].y_;
+	lua_pushnumber(L, y);
+	return 1;
+}
+
+int API_SendMessage(lua_State* L)
+{
+	int my_id = (int)lua_tointeger(L, -3);
+	int user_id = (int)lua_tointeger(L, -2);
+	char* mess = (char*)lua_tostring(L, -1);
+
+	lua_pop(L, 4);
+
+	clients[user_id].send_chat_packet(my_id, mess);
+	return 0;
 }
 
 void InitializeNPC()
@@ -580,11 +702,11 @@ void InitializeNPC()
 			if (my_map[y][x] == 50)
 				break;
 		}
-		clients[i].in_use_ = true;
-		clients[i].pos_.x_ = x;
-		clients[i].pos_.y_ = y;
-		clients[i].pos_.id_ = i;
-		Sector.addObject(clients[i].pos_);
+		clients[i].x_ = x;
+		clients[i].y_ = y;
+		clients[i].prev_sector_ = clients[i].x_ / SECTOR_SIZE + clients[i].y_ / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
+		clients[i].now_sector_ = clients[i].prev_sector_;
+		Sector.insert({ i, clients[i].now_sector_ });
 		clients[i].id_ = i;
 		clients[i].state_ = ST_INGAME;
 		if (rand() % 20 == 1) {
@@ -612,6 +734,20 @@ void InitializeNPC()
 			clients[i].damage_ = level * 2;
 			clients[i].hp_ = level * 50;
 		}
+
+		auto L = clients[i].L_ = luaL_newstate();
+		luaL_openlibs(L);
+		luaL_loadfile(L, "npc.lua");
+		lua_pcall(L, 0, 0, 0);
+
+		lua_getglobal(L, "set_uid");
+		lua_pushnumber(L, i);
+		lua_pcall(L, 1, 0, 0);
+		// lua_pop(L, 1);// eliminate set_uid from stack after call
+
+		lua_register(L, "API_SendMessage", API_SendMessage);
+		lua_register(L, "API_get_x", API_get_x);
+		lua_register(L, "API_get_y", API_get_y); 
 	}
 }
 
@@ -640,10 +776,16 @@ void do_timer()
 				PostQueuedCompletionStatus(h_iocp, 1, ev.obj_id, &ov->over_);
 				break;
 			}
+			case EV_ATTACK: {
+				OVER_EXP* ov = new OVER_EXP;
+				ov->comp_type_ = OP_NPC_ATTACK;
+				PostQueuedCompletionStatus(h_iocp, 1, ev.obj_id, &ov->over_);
+				break;
 			}
-			continue;		// Ï¶âÏãú Îã§Ïùå ÏûëÏóÖ Í∫ºÎÇ¥Í∏∞
+			}
+			continue;		// ¡ÔΩ√ ¥Ÿ¿Ω ¿€æ˜ ≤®≥ª±‚
 		}
-		this_thread::sleep_for(1ms);   // timer_queueÍ∞Ä ÎπÑÏñ¥ ÏûàÏúºÎãà Ïû†Ïãú Í∏∞Îã§Î†∏Îã§Í∞Ä Îã§Ïãú ÏãúÏûë
+		this_thread::sleep_for(1ms);   // timer_queue∞° ∫ÒæÓ ¿÷¿∏¥œ ¿·Ω√ ±‚¥Ÿ∑»¥Ÿ∞° ¥ŸΩ√ Ω√¿€
 	}
 }
 
@@ -670,121 +812,66 @@ void disconnect(int c_id)
 }
 void do_npc_random_move(int npc_id)
 {
-	if (clients[npc_id].in_use_ == false)
-		return;
+	SESSION& npc = clients[npc_id];
+	int my_sector = Sector[npc_id];
+	unordered_set<int> old_vl;
 	int distance;
-	int min_distance = 5;
+	int min_distance = 100;
 	int nearest = -1;
-
-	unordered_set<int> vl;
-	Sector.getNearbyObjects(vl, clients[npc_id].pos_);
-
-	for (int obj : vl) {
-		if (clients[obj].in_use_ == false) continue;
-		if (ST_INGAME != clients[obj].state_) continue;
-		if (true == is_npc(obj)) continue;
-		if (true == can_see_d(clients[npc_id].id_, obj, &distance)) {
+	for (auto& obj : Sector) {
+		if (clients[obj.first].in_use_ == false) continue;
+		if (!in_near_sector(my_sector,obj.second)) continue;
+		if (ST_INGAME != clients[obj.first].state_) continue;
+		if (true == is_npc(obj.first)) continue;
+		if (true == can_see_d(npc.id_, obj.first, &distance)) {
 			if (distance < min_distance) {
 				min_distance = distance;
-				nearest = obj;
+				nearest = obj.first;
 			}
+			old_vl.insert(clients[obj.first].id_);
 		}
 	}
 	if (min_distance <= 3) {
-		clients[nearest].hp_l_.lock();
-		int damage = clients[npc_id].damage_ - clients[nearest].armor_;
-		if (damage < 0) damage = 0;
-		if (clients[npc_id].level_ <= 10) {
+		if (npc.level_ <= 10) {
 			if (min_distance <= 3) {
-				clients[nearest].hp_ -= damage;
+				clients[nearest].hp_ -= (npc.damage_ - clients[nearest].armor_);
 			}
 		}
-		else if (clients[npc_id].level_ <= 20) {
+		else if (npc.level_ <= 20) {
 			if (min_distance <= 2) {
-				clients[nearest].hp_ -= damage;
+				clients[nearest].hp_ -= (npc.damage_ - clients[nearest].armor_);
 			}
 		}
-		else if (clients[npc_id].level_ <= 30) {
+		else if (npc.level_ <= 30) {
 			if (min_distance <= 1) {
-				clients[nearest].hp_ -= damage;
+				clients[nearest].hp_ -= (npc.damage_ - clients[nearest].armor_);
 			}
 		}
-		else if (clients[npc_id].level_ <= 40) {
+		else if (npc.level_ <= 40) {
 			if (min_distance <= 1) {
-				clients[nearest].hp_ -= damage;
+				clients[nearest].hp_ -= (npc.damage_ - clients[nearest].armor_);
 			}
 		}
-		else {
-			if (min_distance <= 1) {
-				clients[nearest].hp_ -= damage;
-			}
-		}
+
 		if (clients[nearest].hp_ > 0) {
-			clients[nearest].hp_l_.unlock();
-			clients[nearest].send_get_damage_packet(npc_id, damage, clients[nearest].hp_);
+			clients[nearest].send_stat_change_packet(nearest, clients[nearest].max_hp_,
+				clients[nearest].hp_, clients[nearest].level_, clients[nearest].exp_);
 		}
 		else {
 			clients[nearest].hp_ = 100;
-			Sector.updateObject(clients[nearest].pos_, clients[nearest].respawn_x_, clients[nearest].respawn_y_);
-			clients[nearest].pos_.x_.store(clients[nearest].respawn_x_);
-			clients[nearest].pos_.y_.store(clients[nearest].respawn_y_);
+			clients[nearest].x_ = clients[nearest].first_x_;
+			clients[nearest].y_ = clients[nearest].first_y_;
 			clients[nearest].exp_ /= 2;
 			clients[nearest].send_stat_change_packet(nearest, clients[nearest].max_hp_,
 				clients[nearest].hp_, clients[nearest].level_, clients[nearest].exp_);
-			clients[nearest].hp_l_.unlock();
-			clients[nearest].vl_.lock();
-			unordered_set<int> old_vl = clients[nearest].view_list_;
-			clients[nearest].vl_.unlock();
-			unordered_set <int> vl;
-			Sector.getNearbyObjects(vl, clients[nearest].pos_);
-			unordered_set <int> new_vl;
-			for (int pl : vl) {
-				if (clients[pl].in_use_ == false) continue;
-				if (pl == nearest) continue;
-				if (clients[pl].state_ != ST_INGAME) continue;
-				if (false == can_see(pl, nearest)) continue;
-				new_vl.insert(pl);
-			}
-
 			clients[nearest].send_move_packet(nearest);
-
-			for (int pl : new_vl) {
-				auto& cpl = clients[pl];
-				if (is_pc(pl)) {
-					cpl.vl_.lock();
-					if (clients[pl].view_list_.count(nearest)) {
-						cpl.vl_.unlock();
-						clients[pl].send_move_packet(nearest);
-					}
-					else {
-						cpl.vl_.unlock();
-						clients[pl].send_add_object_packet(nearest);
-					}
-				}
-				else WakeUpNPC(pl);
-
-				if (old_vl.count(pl) == 0)
-					clients[nearest].send_add_object_packet(pl);
-			}
-
-			for (auto& pl : old_vl) {
-				if (0 == new_vl.count(pl)) {
-					clients[nearest].send_remove_player_packet(pl);
-					if (is_pc(pl))
-						clients[pl].send_remove_player_packet(nearest);
-				}
-			}
-			clients[nearest].vl_.lock();
-			clients[nearest].view_list_ = new_vl;
-			clients[nearest].vl_.unlock();
-
 		}
 		return;
 	}
-	if (clients[npc_id].level_ <= 10) return;
 
-	int x = clients[npc_id].pos_.x_;
-	int y = clients[npc_id].pos_.y_;
+
+	int x = npc.x_;
+	int y = npc.y_;
 	
 	switch (rand() % 4) {
 	case 0: {
@@ -812,52 +899,49 @@ void do_npc_random_move(int npc_id)
 		break;
 	}
 	}
-		Sector.updateObject(clients[npc_id].pos_, x, y);
-		clients[npc_id].pos_.x_.store(x);
-		clients[npc_id].pos_.y_.store(y);
+	npc.x_ = x;
+	npc.y_ = y;
+	
 
-	 Sector.getNearbyObjects(vl, clients[npc_id].pos_);
+	clients[npc_id].prev_sector_ = clients[npc_id].now_sector_;
+	clients[npc_id].now_sector_ = x / SECTOR_SIZE + y / SECTOR_SIZE * (W_WIDTH / SECTOR_SIZE);
+	if (clients[npc_id].prev_sector_ != clients[npc_id].now_sector_) {
+		Sector[npc_id] =  clients[npc_id].now_sector_;
+	}
+	my_sector = clients[npc_id].now_sector_;
 	unordered_set<int> new_vl;
-
-	clients[npc_id].vl_.lock();
-	unordered_set<int>old_vl = clients[npc_id].view_list_;
-	clients[npc_id].vl_.unlock();
-
-	for (int obj : vl) {
-		if (clients[obj].in_use_ == false) continue;
-		if (ST_INGAME != clients[obj].state_) continue;
-		if (is_npc(obj)) continue;
-		if (can_npc_see(clients[npc_id].id_, obj))
-			new_vl.insert(obj);
+	for (auto& obj : Sector) {
+		if (clients[obj.first].in_use_ == false) continue;
+		if (!in_near_sector(my_sector,obj.second)) continue;
+		if (ST_INGAME != clients[obj.first].state_) continue;
+		if (true == is_npc(obj.first)) continue;
+		if (true == can_see(npc.id_, obj.first))
+			new_vl.insert(clients[obj.first].id_);
 	}
 
 	for (auto pl : new_vl) {
 		if (0 == old_vl.count(pl)) {
-			// ÌîåÎ†àÏù¥Ïñ¥Ïùò ÏãúÏïºÏóê Îì±Ïû•
-			clients[pl].send_add_object_packet(clients[npc_id].id_);
+			// «√∑π¿ÃæÓ¿« Ω√æﬂø° µÓ¿Â
+			clients[pl].send_add_object_packet(npc.id_);
 		}
 		else {
-			// ÌîåÎ†àÏù¥Ïñ¥Í∞Ä Í≥ÑÏÜç Î≥¥Í≥† ÏûàÏùå.
-			clients[pl].send_move_packet(clients[npc_id].id_);
+			// «√∑π¿ÃæÓ∞° ∞Ëº” ∫∏∞Ì ¿÷¿Ω.
+			clients[pl].send_move_packet(npc.id_);
 		}
 	}
 
 	for (auto pl : old_vl) {
 		if (0 == new_vl.count(pl)) {
 			clients[pl].vl_.lock();
-			if (0 != clients[pl].view_list_.count(clients[npc_id].id_)) {
+			if (0 != clients[pl].view_list_.count(npc.id_)) {
 				clients[pl].vl_.unlock();
-				clients[pl].send_remove_player_packet(clients[npc_id].id_);
+				clients[pl].send_remove_player_packet(npc.id_);
 			}
 			else {
 				clients[pl].vl_.unlock();
 			}
 		}
 	}
-
-	clients[npc_id].vl_.lock();
-	clients[npc_id].view_list_ = new_vl;
-	clients[npc_id].vl_.unlock();
 }
 
 void worker_thread(HANDLE h_iocp)
@@ -872,8 +956,6 @@ void worker_thread(HANDLE h_iocp)
 			if (ex_over->comp_type_ == OP_ACCEPT) cout << "Accept Error";
 			else {
 				cout << "GQCS Error on client[" << key << "]\n";
-				clients[key].db_state_ = 2;
-				db_queue.push(key);
 				disconnect(static_cast<int>(key));
 				if (ex_over->comp_type_ == OP_SEND) delete ex_over;
 				continue;
@@ -882,20 +964,20 @@ void worker_thread(HANDLE h_iocp)
 
 		if ((0 == num_bytes) && ((ex_over->comp_type_ == OP_RECV) || (ex_over->comp_type_ == OP_SEND))) {
 			disconnect(static_cast<int>(key));
-			clients[key].db_state_ = 2;
-			db_queue.push(key);
 			if (ex_over->comp_type_ == OP_SEND) delete ex_over;
 			continue;
 		}
 
 		switch (ex_over->comp_type_) {
 		case OP_ACCEPT: {
-			int client_id;
-			get_new_client_id(client_id);
+			int client_id = get_new_client_id();
 			if (client_id != -1) {
-				clients[client_id].pos_.x_ = 0;
-				clients[client_id].pos_.y_ = 0;
-				clients[client_id].pos_.id_ = client_id;
+				{
+					lock_guard<mutex> ll(clients[client_id].s_lock_);
+					clients[client_id].state_ = ST_ALLOC;
+				}
+				clients[client_id].x_ = 0;
+				clients[client_id].y_ = 0;
 				clients[client_id].id_ = client_id;
 				clients[client_id].name_[0] = 0;
 				clients[client_id].prev_remain_ = 0;
@@ -933,30 +1015,21 @@ void worker_thread(HANDLE h_iocp)
 			clients[key].do_recv();
 			break;
 		}
-		case OP_SEND: {
+		case OP_SEND:
 			delete ex_over;
 			break;
-		}
+
 		case OP_NPC_MOVE: {
 			bool keep_alive = false;
-
-			unordered_set<int> vl;
-			Sector.getNearbyObjects(vl, clients[key].pos_);
-
-			for (int pl : vl) {
-				if (clients[pl].in_use_ == false) continue;
-				if (pl == key) continue;
-				if (clients[pl].state_ != ST_INGAME) continue;
-				if (false == can_npc_see(pl, key)) continue;
-				if (!is_pc(pl)) continue;
-				keep_alive = true;
-				break;
-			}
-
-			if (keep_alive) {
-				do_npc_random_move(static_cast<int>(key));
-				if (clients[static_cast<int>(key)].in_use_ == false)
+			for (int j = 0; j < MAX_USER; ++j) {
+				if (clients[j].state_ != ST_INGAME) continue;
+				if (can_see(static_cast<int>(key), j)) {
+					keep_alive = true;
 					break;
+				}
+			}
+			if (true == keep_alive) {
+				do_npc_random_move(static_cast<int>(key));
 				TIMER_EVENT ev{ key, chrono::system_clock::now() + 1s, EV_RANDOM_MOVE, 0 };
 				timer_queue.push(ev);
 			}
@@ -966,239 +1039,20 @@ void worker_thread(HANDLE h_iocp)
 			delete ex_over;
 			break;
 		}
-		case OP_NPC_RESURRECTION: {
-			clients[key].in_use_ = true;
-			clients[key].level_*= 2;
-			clients[key].hp_ = clients[key].level_*50;
-			clients[key].damage_ = clients[key].level_*2;
-
-			unordered_set<int> vl;
-			Sector.getNearbyObjects(vl, clients[key].pos_);
-			unordered_set<int> new_vl;
-			
-			for (int pl : vl) {
-				if (clients[pl].in_use_ == false) continue;
-				if (pl == key) continue;
-				if (clients[pl].state_ != ST_INGAME) continue;
-				if (false == can_see(pl, key)) continue;
-				if (!is_pc(pl)) continue;
-				new_vl.insert(pl);
-			}
-			
-			for (auto& pl : new_vl) {
-				if (clients[pl].in_use_ == false) continue;
-				clients[pl].send_add_object_packet(key);
-			}
-			break;
-		}
-		case OP_LOGIN: {
-			clients[key].pos_.id_ = key;
-			int character = rand() % 3;
-			if (character == 0) {
-				clients[key].character_ = WARRIOR;
-				clients[key].damage_ = WARRIOR_STAT_ATK * clients[key].level_;
-				clients[key].armor_ = WARRIOR_STAT_ARMOR * clients[key].level_;
-			}
-			else if (character == 1) {
-				clients[key].character_ = MAGE;
-				clients[key].damage_ = MAGE_STAT_ATK * clients[key].level_;
-				clients[key].armor_ = MAGE_STAT_ARMOR * clients[key].level_;
-			}
-			else if (character == 2) {
-				clients[key].character_ = PRIST;
-				clients[key].damage_ = PRIST_STAT_ATK * clients[key].level_;
-				clients[key].armor_ = PRIST_STAT_ARMOR * clients[key].level_;
-			}
-			clients[key].state_ = ST_INGAME;
-
-			clients[key].in_use_ = true;
-			clients[key].send_login_info_packet();
-			Sector.addObject(clients[key].pos_);
-
-			unordered_set <int> vl;
-			Sector.getNearbyObjects(vl, clients[key].pos_);
-			unordered_set <int> new_vl;
-			for (auto& pl : vl) {
-				if (clients[pl].in_use_ == false) continue;
-				if (pl == key) continue;
-				if (clients[pl].state_ != ST_INGAME) continue;
-				if (false == can_see(pl, key)) continue;
-				new_vl.insert(pl);
-			}
-
-			clients[key].vl_.lock();
-			unordered_set<int> old_vlist = clients[key].view_list_;
-			clients[key].vl_.unlock();
-
-			for (auto pl : new_vl) {
-				auto& cpl = clients[pl];
-				if (is_pc(pl)) {
-					cpl.vl_.lock();
-					if (clients[pl].view_list_.count(key)) {
-						cpl.vl_.unlock();
-						clients[pl].send_move_packet(key);
-					}
-					else {
-						cpl.vl_.unlock();
-						clients[pl].send_add_object_packet(key);
-					}
-				}
-
-				if (old_vlist.count(pl) == 0) {
-					clients[key].send_add_object_packet(pl);
-					if (false == is_pc(pl))
-						WakeUpNPC(pl);
-				}
-			}
-			break;
-		}
-		case OP_LOGIN_FAIL: {
-			cout << key << " : LOGIN_ FAIL\n";
-			disconnect(static_cast<int>(key));
-			if (ex_over->comp_type_ == OP_SEND) delete ex_over;
-			break;
-		}
 		}
 	}
 }
 
-void HandleDiagnosticRecord(SQLHANDLE hHandle, SQLSMALLINT hType, RETCODE RetCode)
-{
-	SQLSMALLINT iRec = 0;
-	SQLINTEGER iError;
-	WCHAR wszMessage[1000];
-	WCHAR wszState[SQL_SQLSTATE_SIZE + 1];
-	if (RetCode == SQL_INVALID_HANDLE) {
-		fwprintf(stderr, L"Invalid handle!\n");
-		return;
-	}
-	while (SQLGetDiagRec(hType, hHandle, ++iRec, wszState, &iError, wszMessage,
-		(SQLSMALLINT)(sizeof(wszMessage) / sizeof(WCHAR)), (SQLSMALLINT*)NULL) == SQL_SUCCESS) {
-		// Hide data truncated..
-		if (wcsncmp(wszState, L"01004", 5)) {
-			fwprintf(stderr, L"[%5.5s] %s (%d)\n", wszState, wszMessage, iError);
-		}
-	}
-}
-
-void connect_db() {
-	setlocale(LC_ALL, "korean");
-	SQLHENV henv = NULL;
-	SQLHDBC hdbc = NULL;
-	SQLHSTMT hstmt = NULL;
-	SQLINTEGER  userId=0, userX=0, userY=0, userLevel=0, userExp=0;
-	SQLWCHAR userName[NAME_SIZE];
-	SQLLEN cbName = 0, cbId = 0, cbX = 0, cbY = 0, cbLevel = 0, cbExp = 0;;
-
-	SQLRETURN retcode;
-
-	// Allocate environment handle  
-	if (SQLAllocHandle(SQL_HANDLE_ENV, SQL_NULL_HANDLE, &henv) == SQL_SUCCESS) {
-		cout << "SQLAllocHandle OK\n";
-		if (SQLSetEnvAttr(henv, SQL_ATTR_ODBC_VERSION, (void*)SQL_OV_ODBC3, 0) == SQL_SUCCESS) {
-			cout << "SQLSetEnvAttr OK\n";
-			if (SQLAllocHandle(SQL_HANDLE_DBC, henv, &hdbc) == SQL_SUCCESS) {
-				cout << "SQLAllocHandle OK\n";
-				retcode = SQLConnect(hdbc, (SQLWCHAR*)L"GS_Term_Project", SQL_NTS, (SQLWCHAR*)NULL, 0, NULL, 0);
-				if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
-					cout << "SQLConnect OK\n";
-					if (SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt) == SQL_SUCCESS) {
-						cout << "SQLAllocHandle OK\n";
-						while (true) {
-							if (db_queue.empty()) {
-								this_thread::sleep_for(5ms);
-								continue;
-							}
-							int userId;
-							db_queue.try_pop(userId);
-							if (SQL_SUCCESS != SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt)) {
-								cout << "SQLAllockHandleError\n";
-								exit(1);
-							}
-							if (clients[userId].db_state_ == 1) {
-								wstring func = L"EXEC SearchClient ";
-								func += std::to_wstring(clients[userId].login_id_);
-								retcode = SQLExecDirect(hstmt, (SQLWCHAR*)func.c_str(), SQL_NTS);
-								if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
-									SQLBindCol(hstmt, 1, SQL_C_WCHAR, &userName, sizeof(userName), &cbName);
-									SQLBindCol(hstmt, 2, SQL_C_LONG, &userLevel, 4, &cbLevel);
-									SQLBindCol(hstmt, 3, SQL_C_LONG, &userExp, 4, &cbExp);
-									SQLBindCol(hstmt, 4, SQL_C_LONG, &userX, 4, &cbX);
-									SQLBindCol(hstmt, 5, SQL_C_LONG, &userY, 4, &cbY);
-									for (int i = 0; ; ++i) {
-										retcode = SQLFetch(hstmt);
-										if (retcode == SQL_ERROR || retcode == SQL_SUCCESS_WITH_INFO) {
-											HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
-										}
-
-										if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
-											WideCharToMultiByte(CP_ACP, 0, userName, -1, clients[userId].name_,
-												sizeof(clients[userId].name_), NULL, NULL);
-											clients[userId].level_ = 100;
-											clients[userId].exp_ = userExp;
-											clients[userId].pos_.x_ = userX;
-											clients[userId].pos_.y_ = userY;
-											OVER_EXP* ov = new OVER_EXP;
-											ov->comp_type_ = OP_LOGIN;
-											PostQueuedCompletionStatus(h_iocp, 1, userId, &ov->over_);
-											break;
-										}
-										else {
-
-											OVER_EXP* ov = new OVER_EXP;
-											ov->comp_type_ = OP_LOGIN_FAIL;
-											PostQueuedCompletionStatus(h_iocp, 1, userId, &ov->over_);
-											//cout << clients[userId].login_id_ << " Login Fail\n";
-											break;
-										}
-									}
-								}
-								else {
-									HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
-								}
-							}
-							else if (clients[userId].db_state_ == 2) {
-								wstring func = L"EXEC SaveData ";
-								func += std::to_wstring(clients[userId].login_id_);
-								func += L", ";
-								func += std::to_wstring(clients[userId].level_);
-								func += L", ";
-								func += std::to_wstring(clients[userId].exp_);
-								func += L", ";	
-								func += std::to_wstring(clients[userId].pos_.x_);
-								func += L", ";
-								func += std::to_wstring(clients[userId].pos_.y_);
-								retcode = SQLExecDirect(hstmt, (SQLWCHAR*)func.c_str(), SQL_NTS);
-								if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO)
-									continue;
-								else
-									HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
-							}
-							SQLFreeHandle(SQL_HANDLE_STMT, hstmt);
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Cleanup
-	if (hstmt) SQLFreeHandle(SQL_HANDLE_STMT, hstmt);
-	if (hdbc) {
-		SQLDisconnect(hdbc);
-		SQLFreeHandle(SQL_HANDLE_DBC, hdbc);
-	}
-	if (henv) SQLFreeHandle(SQL_HANDLE_ENV, henv);
-}
 int main()
 {
-	printf("Îßµ Ï†ïÎ≥¥ Ï§ÄÎπÑÏ§ë\n");
-	Load_Map_info();
-	printf("Îßµ Ï†ïÎ≥¥ Ï§ÄÎπÑÏôÑÎ£å\n");
+	printf("∏  ¡§∫∏ ¡ÿ∫Ò¡ﬂ\n");
+	map_loader ml;
+	ml.Load_Map_info();
+	printf("∏  ¡§∫∏ ¡ÿ∫Òøœ∑·\n");
 
-	printf("Î™¨Ïä§ÌÑ∞ Ï†ïÎ≥¥ Ï§ÄÎπÑÏ§ë\n");
+	printf("∏ÛΩ∫≈Õ ¡§∫∏ ¡ÿ∫Ò¡ﬂ\n");
 	InitializeNPC();
-	printf("Î™¨Ïä§ÌÑ∞ Ï†ïÎ≥¥ Ï§ÄÎπÑÏôÑÎ£å\n");
+	printf("∏ÛΩ∫≈Õ ¡§∫∏ ¡ÿ∫Òøœ∑·\n");
 
 	WSADATA WSAData;
 	WSAStartup(MAKEWORD(2, 2), &WSAData);
@@ -1216,7 +1070,7 @@ int main()
 	CreateIoCompletionPort(reinterpret_cast<HANDLE>(g_s_socket), h_iocp, 9999, 0);
 	g_c_socket = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 	g_a_over.comp_type_ = OP_ACCEPT;
-	printf("ÏÑúÎ≤Ñ ÏãúÏûë\n");
+	printf("º≠πˆ Ω√¿€\n");
 	AcceptEx(g_s_socket, g_c_socket, g_a_over.send_buf_, 0, addr_size + 16, addr_size + 16, 0, &g_a_over.over_);
 
 	vector <thread> worker_threads;
@@ -1224,11 +1078,9 @@ int main()
 	for (int i = 0; i < num_threads; ++i)
 		worker_threads.emplace_back(worker_thread, h_iocp);
 	thread timer_thread{ do_timer };
-	thread db_thread{ connect_db };
+	timer_thread.join();
 	for (auto& th : worker_threads)
 		th.join();
-	timer_thread.join();
-	db_thread.join();
 	closesocket(g_s_socket);
 	WSACleanup();
 }

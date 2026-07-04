@@ -351,7 +351,7 @@ void ProcessPacket(char* ptr)
 		avatar.exp_ = packet->exp;
 		g_left_x = packet->x - 10;
 		g_top_y = packet->y - 10;
-		avatar.change_texture(packet->character);
+		avatar.change_texture(packet->visual);
 		avatar.set_hp(avatar.hp_);
 		avatar.show();
 	}
@@ -370,7 +370,7 @@ void ProcessPacket(char* ptr)
 		}
 		else if (id < MAX_USER) {
 			players[id] = OBJECT{ *pieces, 0, 0, 64, 64 };
-			players[id].change_texture(my_packet->character);
+			players[id].change_texture(my_packet->visual);
 			players[id].move(my_packet->x, my_packet->y);
 			players[id].set_name(my_packet->name);
 			players[id].set_hp(my_packet->hp);
@@ -436,13 +436,6 @@ void ProcessPacket(char* ptr)
 		}
 		break;
 		
-	}
-
-	case SC_GET_DAMAGE: {
-		SC_GET_DAMAGE_PACKET* my_packet = reinterpret_cast<SC_GET_DAMAGE_PACKET*>(ptr);
-		printf("Player Get %d Damage From Monster Id : %d\n", my_packet->got_damage, my_packet->id);
-		avatar.hp_ = my_packet->hp;
-		break;
 	}
 	default:
 		printf("Unknown PACKET type [%d]\n", ptr[2]);
@@ -534,10 +527,9 @@ void send_packet(void* packet)
 
 int main()
 {
-	string name;
-	int id;
-	cout << "Enter Your Id : ";
-	cin >> id;
+	string player_name;
+	cout << "Enter player_name : ";
+	cin >> player_name;
 	ml.Load_Map_info();
 	wcout.imbue(locale("korean"));
 	sf::Socket::Status status = s_socket.connect("127.0.0.1", PORT_NUM);
@@ -552,9 +544,9 @@ int main()
 	CS_LOGIN_PACKET p;
 	p.size = sizeof(p);
 	p.type = CS_LOGIN;
-	p.id = id;
-	name = to_string(id);
-	strcpy_s(p.name,name.c_str());
+
+	
+	strcpy_s(p.name, player_name.c_str());
 	send_packet(&p);
 	avatar.set_name(p.name);
 
@@ -587,13 +579,6 @@ int main()
 					CS_ATTACK_PACKET p;
 					p.size = sizeof(p);
 					p.type = CS_ATTACK;
-					send_packet(&p);
-					break;
-				}
-				case sf::Keyboard::T:{
-					CS_TELEPORT_PACKET p;
-					p.size = sizeof(p);
-					p.type = CS_TELEPORT;
 					send_packet(&p);
 					break;
 				}

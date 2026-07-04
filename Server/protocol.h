@@ -3,20 +3,13 @@ constexpr int PORT_NUM = 4000;
 constexpr int NAME_SIZE = 20;
 constexpr int CHAT_SIZE = 300;
 
-constexpr int MAX_USER = 10'000;
-constexpr int MAX_NPC = 200'000;
-
-constexpr int MAP_COUNT = 24;
+constexpr int MAX_USER = 10000;
+constexpr int MAX_NPC = 20000;
 
 constexpr int W_WIDTH = 2000;
 constexpr int W_HEIGHT = 2000;
 
-constexpr int WARRIOR_STAT_ATK = 200;
-constexpr int WARRIOR_STAT_ARMOR = 100;
-constexpr int MAGE_STAT_ATK = 20;
-constexpr int MAGE_STAT_ARMOR = 100;
-constexpr int PRIST_STAT_ATK = 5;
-constexpr int PRIST_STAT_ARMOR = 100;
+constexpr int MAP_COUNT = 24;
 
 // Packet ID
 constexpr char CS_LOGIN = 0;
@@ -34,13 +27,11 @@ constexpr char SC_REMOVE_OBJECT = 5;
 constexpr char SC_MOVE_OBJECT = 6;
 constexpr char SC_CHAT = 7;
 constexpr char SC_STAT_CHANGE = 8;
-constexpr char SC_GET_DAMAGE = 9;
 
 #pragma pack (push, 1)
 struct CS_LOGIN_PACKET {
 	unsigned short size;
 	char	type;
-	int		id;
 	char	name[NAME_SIZE];
 };
 
@@ -78,7 +69,7 @@ struct CS_ATTACK_PACKET {
 struct SC_LOGIN_INFO_PACKET {
 	unsigned short size;
 	char	type;
-	int		character;				// 0 : 전사, 1 : 마법사, 2 : 사제
+	int		visual;				// 0 : 전사, 1 : 마법사, 2 : 사제
 	int		id;
 	int		hp;
 	int		max_hp;
@@ -91,7 +82,7 @@ struct SC_ADD_OBJECT_PACKET {
 	unsigned short size;
 	char	type;
 	int		id;
-	int		character;		// 0 : 플레이어,  1 : NPC
+	int		visual;		// 0 : 플레이어,  1 : NPC
 	short	x, y;
 	int		hp;
 	char	name[NAME_SIZE];
@@ -138,7 +129,6 @@ struct SC_GET_DAMAGE_PACKET {
 	unsigned short size;
 	char	type;
 	int		id;
-	int		hp;
 	int		got_damage;
 };
 
