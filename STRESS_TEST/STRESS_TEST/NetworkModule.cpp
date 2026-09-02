@@ -1,4 +1,4 @@
-#define _WINSOCK_DEPRECATED_NO_WARNINGS
+ï»¿#define _WINSOCK_DEPRECATED_NO_WARNINGS
 
 #include <WinSock2.h>
 #include <winsock.h>
@@ -65,14 +65,14 @@ atomic_int num_connections;
 atomic_int client_to_close;
 atomic_int active_clients;
 
-int			global_delay;				// ms´ÜÀ§, 1000ÀÌ ³ÑÀ¸¸é Å¬¶óÀÌ¾ğÆ® Áõ°¡ Á¾·á
+int			global_delay;				// msë‹¨ìœ„, 1000ì´ ë„˜ìœ¼ë©´ í´ë¼ì´ì–¸íŠ¸ ì¦ê°€ ì¢…ë£Œ
 
 vector <thread*> worker_threads;
 thread test_thread;
 
 float point_cloud[MAX_TEST * 2];
 
-// ³ªÁß¿¡ NPC±îÁö Ãß°¡ È®Àå ¿ë
+// ë‚˜ì¤‘ì— NPCê¹Œì§€ ì¶”ê°€ í™•ì¥ ìš©
 struct ALIEN {
 	int id;
 	int x, y;
@@ -89,7 +89,7 @@ void error_display(const char* msg, int err_no)
 		MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
 		(LPTSTR)&lpMsgBuf, 0, NULL);
 	std::cout << msg;
-	std::wcout << L"¿¡·¯" << lpMsgBuf << std::endl;
+	std::wcout << L"ì—ëŸ¬" << lpMsgBuf << std::endl;
 
 	MessageBox(hWnd, lpMsgBuf, L"ERROR", 0);
 	LocalFree(lpMsgBuf);
@@ -162,10 +162,11 @@ void ProcessPacket(int ci, unsigned char packet[])
 		g_clients[my_id].x = login_packet->x;
 		g_clients[my_id].y = login_packet->y;
 
-		//cs_packet_teleport t_packet;
-		//t_packet.size = sizeof(t_packet);
-		//t_packet.type = CS_TELEPORT;
-		//SendPacket(my_id, &t_packet);
+		// Avoid the spawn hot spot: teleport to a random tile right after login so clients spread over the map (see CS_TELEPORT in protocol.h)
+		CS_TELEPORT_PACKET t_packet;
+		t_packet.size = sizeof(t_packet);
+		t_packet.type = CS_TELEPORT;
+		SendPacket(my_id, &t_packet);
 	}
 	break;
 	default: break;
@@ -205,7 +206,7 @@ void Worker_Thread()
 			while (io_size > 0) {
 				if (0 == psize) psize = *reinterpret_cast<short*>(buf);
 				if (io_size + pr_size >= psize) {
-					// Áö±İ ÆĞÅ¶ ¿Ï¼º °¡´É
+					// ì§€ê¸ˆ íŒ¨í‚· ì™„ì„± ê°€ëŠ¥
 					unsigned char packet[MAX_PACKET_SIZE];
 					memcpy(packet, g_clients[ci].packet_buf, pr_size);
 					memcpy(packet + pr_size, buf, psize - pr_size);
@@ -265,6 +266,12 @@ void Adjust_Number_Of_Client()
 	static int delay_multiplier = 1;
 	static int max_limit = MAXINT;
 	static bool increasing = true;
+	// Record the peak concurrent connections: print only when active_clients exceeds the previous peak (measurement aid, no steady-state cost)
+	static int max_active_clients = 0;
+	if (active_clients > max_active_clients) {
+		max_active_clients = active_clients;
+		cout << "MAX CONNECTED : " << max_active_clients << endl;
+	}
 
 	if (active_clients >= MAX_TEST) return;
 	if (num_connections >= MAX_CLIENTS) return;

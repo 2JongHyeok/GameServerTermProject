@@ -1,4 +1,4 @@
-#include <SFML/Graphics.hpp>
+ï»¿#include <SFML/Graphics.hpp>
 #include <SFML/Network.hpp>
 #include <iostream>
 #include <unordered_map>
@@ -150,14 +150,14 @@ public:
 	void Load_Map_info() {
 
 		std::ifstream in{ "mymap.txt" };
-		// ÆÄÀÏ ¿­±â ½ÇÆĞ ¿©ºÎ È®ÀÎ
+		// íŒŒì¼ ì—´ê¸° ì‹¤íŒ¨ ì—¬ë¶€ í™•ì¸
 		if (!in) {
-			std::cerr << "ÆÄÀÏÀ» ¿­Áö ¸øÇß½À´Ï´Ù: test1.txt\n";
+			std::cerr << "íŒŒì¼ì„ ì—´ì§€ ëª»í–ˆìŠµë‹ˆë‹¤: test1.txt\n";
 			if (in.fail()) {
-				std::cerr << "¿À·ù: ÆÄÀÏÀ» Ã£À» ¼ö ¾ø½À´Ï´Ù ¶Ç´Â ÆÄÀÏÀ» ¿­ ¼ö ¾ø½À´Ï´Ù.\n";
+				std::cerr << "ì˜¤ë¥˜: íŒŒì¼ì„ ì°¾ì„ ìˆ˜ ì—†ìŠµë‹ˆë‹¤ ë˜ëŠ” íŒŒì¼ì„ ì—´ ìˆ˜ ì—†ìŠµë‹ˆë‹¤.\n";
 			}
 			else {
-				std::cerr << "¾Ë ¼ö ¾ø´Â ¿À·ù°¡ ¹ß»ıÇß½À´Ï´Ù.\n";
+				std::cerr << "ì•Œ ìˆ˜ ì—†ëŠ” ì˜¤ë¥˜ê°€ ë°œìƒí–ˆìŠµë‹ˆë‹¤.\n";
 			}
 
 		}
@@ -483,7 +483,7 @@ void client_main()
 	auto recv_result = s_socket.receive(net_buf, BUF_SIZE, received);
 	if (recv_result == sf::Socket::Error)
 	{
-		wcout << L"Recv ¿¡·¯!";
+		wcout << L"Recv ì—ëŸ¬!";
 		exit(-1);
 	}
 	if (recv_result == sf::Socket::Disconnected) {
@@ -544,7 +544,7 @@ int main()
 	s_socket.setBlocking(false);
 	
 	if (status != sf::Socket::Done) {
-		wcout << L"¼­¹ö¿Í ¿¬°áÇÒ ¼ö ¾ø½À´Ï´Ù.\n";
+		wcout << L"ì„œë²„ì™€ ì—°ê²°í•  ìˆ˜ ì—†ìŠµë‹ˆë‹¤.\n";
 		exit(-1);
 	}
 

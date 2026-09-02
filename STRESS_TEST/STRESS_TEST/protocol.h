@@ -1,4 +1,4 @@
-constexpr int PORT_NUM = 4000;
+ï»¿constexpr int PORT_NUM = 4000;
 constexpr int BUF_SIZE = 200;
 constexpr int NAME_SIZE = 20;
 
@@ -17,7 +17,7 @@ constexpr char SC_ADD_PLAYER = 3;
 constexpr char SC_REMOVE_PLAYER = 4;
 constexpr char SC_MOVE_PLAYER = 5;
 
-// Å¬¶óÀÌ¾ğÆ®¿¡¼­ ÇÃ·¹ÀÌ¾î¿Í NPCÀÇ ºñÁÖ¾óÀ» ±¸ºĞÇÏµµ·Ï ÇÏÀÚ.
+// í´ë¼ì´ì–¸íŠ¸ì—ì„œ í”Œë ˆì´ì–´ì™€ NPCì˜ ë¹„ì£¼ì–¼ì„ êµ¬ë¶„í•˜ë„ë¡ í•˜ì.
 constexpr char VI_AVATAR = 0;
 constexpr char VI_PLAYER = 1;
 constexpr char VI_NPC = 2;

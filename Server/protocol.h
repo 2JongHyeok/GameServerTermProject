@@ -1,4 +1,4 @@
-#pragma once
+ï»¿#pragma once
 constexpr int PORT_NUM = 4000;
 constexpr int NAME_SIZE = 20;
 constexpr int CHAT_SIZE = 300;
@@ -22,9 +22,9 @@ constexpr int PRIST_STAT_ARMOR = 100;
 constexpr char CS_LOGIN = 0;
 constexpr char CS_MOVE = 1;
 constexpr char CS_CHAT = 2;
-constexpr char CS_ATTACK = 3;			// 4 ¹æÇâ °ø°İ
-constexpr char CS_TELEPORT = 4;			// RANDOMÇÑ À§Ä¡·Î Teleport, Stress TestÇÒ ¶§ Hot SpotÇö»óÀ» ÇÇÇÏ±â À§ÇØ ±¸Çö
-constexpr char CS_LOGOUT = 5;			// Å¬¶óÀÌ¾ğÆ®¿¡¼­ Á¤»óÀûÀ¸·Î Á¢¼ÓÀ» Á¾·áÇÏ´Â ÆĞÅ¶
+constexpr char CS_ATTACK = 3;			// 4 ë°©í–¥ ê³µê²©
+constexpr char CS_TELEPORT = 4;			// RANDOMí•œ ìœ„ì¹˜ë¡œ Teleport, Stress Testí•  ë•Œ Hot Spotí˜„ìƒì„ í”¼í•˜ê¸° ìœ„í•´ êµ¬í˜„
+constexpr char CS_LOGOUT = 5;			// í´ë¼ì´ì–¸íŠ¸ì—ì„œ ì •ìƒì ìœ¼ë¡œ ì ‘ì†ì„ ì¢…ë£Œí•˜ëŠ” íŒ¨í‚·
 
 
 constexpr char SC_LOGIN_INFO = 2;
@@ -52,12 +52,12 @@ struct CS_MOVE_PACKET {
 };
 
 struct CS_CHAT_PACKET {
-	unsigned short size;			// Å©±â°¡ °¡º¯ÀÌ´Ù, mess°¡ ÀÛÀ¸¸é sizeµµ ÁÙÀÌÀÚ.
+	unsigned short size;			// í¬ê¸°ê°€ ê°€ë³€ì´ë‹¤, messê°€ ì‘ìœ¼ë©´ sizeë„ ì¤„ì´ì.
 	char	type;
 	char	mess[CHAT_SIZE];
 };
 
-struct CS_TELEPORT_PACKET {			// ·£´ıÀ¸·Î ÅÚ·¹Æ÷Æ® ÇÏ´Â ÆĞÅ¶, µ¿Á¢ Å×½ºÆ®¿¡ ÇÊ¿ä
+struct CS_TELEPORT_PACKET {			// ëœë¤ìœ¼ë¡œ í…”ë ˆí¬íŠ¸ í•˜ëŠ” íŒ¨í‚·, ë™ì ‘ í…ŒìŠ¤íŠ¸ì— í•„ìš”
 	unsigned short size;
 	char	type;
 };
@@ -78,7 +78,7 @@ struct CS_ATTACK_PACKET {
 struct SC_LOGIN_INFO_PACKET {
 	unsigned short size;
 	char	type;
-	int		character;				// 0 : Àü»ç, 1 : ¸¶¹ı»ç, 2 : »çÁ¦
+	int		character;				// 0 : ì „ì‚¬, 1 : ë§ˆë²•ì‚¬, 2 : ì‚¬ì œ
 	int		id;
 	int		hp;
 	int		max_hp;
@@ -91,7 +91,7 @@ struct SC_ADD_OBJECT_PACKET {
 	unsigned short size;
 	char	type;
 	int		id;
-	int		character;		// 0 : ÇÃ·¹ÀÌ¾î,  1 : NPC
+	int		character;		// 0 : í”Œë ˆì´ì–´,  1 : NPC
 	short	x, y;
 	int		hp;
 	char	name[NAME_SIZE];
