@@ -13,6 +13,7 @@
 #include <queue>
 #include <array>
 #include <memory>
+#include <string>
 
 using namespace std;
 using namespace chrono;
@@ -62,10 +63,18 @@ struct CLIENT {
 array<int, MAX_CLIENTS> client_map;
 array<CLIENT, MAX_CLIENTS> g_clients;
 atomic_int num_connections;
-atomic_int client_to_close;
 atomic_int active_clients;
 
-int			global_delay;				// ms단위, 1000이 넘으면 클라이언트 증가 종료
+int			global_delay;				// display only : p95 round-trip time so far during the hold phase
+int			target_clients;				// fixed-load mode : connections to reach and then hold
+int			hold_seconds;				// how long the target load is held and measured
+
+// Round-trip time histogram with 1 ms buckets from 0 to 1000 ms; the extra last
+// bucket collects everything above. Atomic counters keep the worker threads
+// lock-free, so recording a sample costs nothing measurable.
+constexpr int RTT_BUCKETS = 1001;
+atomic<unsigned> rtt_hist[RTT_BUCKETS + 1];
+atomic_bool measuring;						// samples count only while the hold phase runs
 
 vector <thread*> worker_threads;
 thread test_thread;
@@ -139,11 +148,13 @@ void ProcessPacket(int ci, unsigned char packet[])
 				g_clients[my_id].y = move_packet->y;
 			}
 			if (ci == my_id) {
-				if (0 != move_packet->move_time) {
-					auto d_ms = duration_cast<milliseconds>(high_resolution_clock::now().time_since_epoch()).count() - move_packet->move_time;
-
-					if (global_delay < d_ms) global_delay++;
-					else if (global_delay > d_ms) global_delay--;
+				if (0 != move_packet->move_time && measuring) {
+					// Both timestamps are truncated to 32 bits, so the unsigned
+					// subtraction stays correct even across a wraparound.
+					unsigned now_ms = static_cast<unsigned>(duration_cast<milliseconds>(high_resolution_clock::now().time_since_epoch()).count());
+					unsigned d_ms = now_ms - move_packet->move_time;
+					int bucket = (d_ms >= RTT_BUCKETS) ? RTT_BUCKETS : static_cast<int>(d_ms);
+					rtt_hist[bucket].fetch_add(1);
 				}
 			}
 		}
@@ -254,52 +265,21 @@ void Worker_Thread()
 	}
 }
 
-constexpr int DELAY_LIMIT = 100;
-constexpr int DELAY_LIMIT2 = 150;
-constexpr int ACCEPT_DELY = 50;
+constexpr int ACCEPT_DELY = 20;
 
 int id = 1;
 mutex id_lock;
 
+// Fixed-load mode : add one connection every ACCEPT_DELY ms until the target
+// is reached, and top it up again if a client drops during the hold phase.
 void Adjust_Number_Of_Client()
 {
-	static int delay_multiplier = 1;
-	static int max_limit = MAXINT;
-	static bool increasing = true;
-	// Record the peak concurrent connections: print only when active_clients exceeds the previous peak (measurement aid, no steady-state cost)
-	static int max_active_clients = 0;
-	if (active_clients > max_active_clients) {
-		max_active_clients = active_clients;
-		cout << "MAX CONNECTED : " << max_active_clients << endl;
-	}
-
-	if (active_clients >= MAX_TEST) return;
+	if (active_clients >= target_clients) return;
 	if (num_connections >= MAX_CLIENTS) return;
 
 	auto duration = high_resolution_clock::now() - last_connect_time;
-	if (ACCEPT_DELY * delay_multiplier > duration_cast<milliseconds>(duration).count()) return;
+	if (ACCEPT_DELY > duration_cast<milliseconds>(duration).count()) return;
 
-	int t_delay = global_delay;
-	if (DELAY_LIMIT2 < t_delay) {
-		if (true == increasing) {
-			max_limit = active_clients;
-			increasing = false;
-		}
-		if (100 > active_clients) return;
-		if (ACCEPT_DELY * 10 > duration_cast<milliseconds>(duration).count()) return;
-		last_connect_time = high_resolution_clock::now();
-		DisconnectClient(client_to_close);
-		client_to_close++;
-		return;
-	}
-	else
-		if (DELAY_LIMIT < t_delay) {
-			delay_multiplier = 10;
-			return;
-		}
-	if (max_limit - (max_limit / 20) < active_clients) return;
-
-	increasing = true;
 	last_connect_time = high_resolution_clock::now();
 	g_clients[num_connections].client_socket = WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED);
 
@@ -353,11 +333,80 @@ fail_to_connect:
 	return;
 }
 
+// Copies the histogram into a plain array and returns the sample count.
+unsigned long long Snapshot(unsigned long long* hist)
+{
+	unsigned long long total = 0;
+	for (int i = 0; i <= RTT_BUCKETS; ++i) {
+		hist[i] = rtt_hist[i];
+		total += hist[i];
+	}
+	return total;
+}
+
+// Smallest bucket at which the running count reaches the given fraction of all samples.
+int Percentile(const unsigned long long* hist, unsigned long long total, double fraction)
+{
+	unsigned long long need = static_cast<unsigned long long>(total * fraction);
+	if (need < 1) need = 1;
+	unsigned long long acc = 0;
+	for (int i = 0; i <= RTT_BUCKETS; ++i) {
+		acc += hist[i];
+		if (acc >= need) return i;
+	}
+	return RTT_BUCKETS;
+}
+
+string BucketLabel(int bucket)
+{
+	return (bucket >= RTT_BUCKETS) ? string(">1000") : to_string(bucket);
+}
+
 void Test_Thread()
 {
+	bool holding = false;
+	high_resolution_clock::time_point hold_start;
+	high_resolution_clock::time_point last_display;
+
 	while (true) {
-		//Sleep(max(20, global_delay));
 		Adjust_Number_Of_Client();
+
+		if (false == holding && active_clients >= target_clients) {
+			// Target reached : drop the ramp-up samples and start the hold phase.
+			for (auto& b : rtt_hist) b = 0;
+			measuring = true;
+			holding = true;
+			hold_start = high_resolution_clock::now();
+			last_display = hold_start;
+		}
+		if (holding) {
+			auto now = high_resolution_clock::now();
+			if (now - last_display >= 60s) {
+				// Only feeds the on-screen "Delay" text; nothing is printed here.
+				last_display = now;
+				unsigned long long hist[RTT_BUCKETS + 1];
+				unsigned long long total = Snapshot(hist);
+				global_delay = (total > 0) ? Percentile(hist, total, 0.95) : 0;
+			}
+			if (now - hold_start >= seconds(hold_seconds)) {
+				measuring = false;
+				unsigned long long hist[RTT_BUCKETS + 1];
+				unsigned long long total = Snapshot(hist);
+				int max_bucket = 0;
+				for (int i = RTT_BUCKETS; i >= 0; --i) {
+					if (hist[i] > 0) { max_bucket = i; break; }
+				}
+				cout << "[final] clients=" << active_clients
+					<< " hold=" << hold_seconds << "s"
+					<< " samples=" << total
+					<< " p50=" << BucketLabel(Percentile(hist, total, 0.50))
+					<< " p95=" << BucketLabel(Percentile(hist, total, 0.95))
+					<< " p99=" << BucketLabel(Percentile(hist, total, 0.99))
+					<< " max=" << BucketLabel(max_bucket)
+					<< " over1000=" << hist[RTT_BUCKETS] << endl;
+				exit(0);
+			}
+		}
 
 		for (int i = 0; i < num_connections; ++i) {
 			if (false == g_clients[i].connected) continue;
@@ -380,7 +429,12 @@ void Test_Thread()
 
 void InitializeNetwork()
 {
-	cin >> server_addr;
+	// stdin : <server address> <target connections> <hold seconds>
+	cin >> server_addr >> target_clients >> hold_seconds;
+	if (!cin || target_clients <= 0 || target_clients > MAX_TEST || hold_seconds <= 0) {
+		cout << "usage: <server_ip> <target_clients 1.." << MAX_TEST << "> <hold_seconds>" << endl;
+		exit(1);
+	}
 	for (auto& cl : g_clients) {
 		cl.connected = false;
 		cl.id = INVALID_ID;
