@@ -8,14 +8,42 @@ void SESSION::do_recv()
 	memset(&recv_over_.over_, 0, sizeof(recv_over_.over_));
 	recv_over_.wsabuf_.len = BUF_SIZE - prev_remain_;
 	recv_over_.wsabuf_.buf = recv_over_.send_buf_ + prev_remain_;
-	WSARecv(socket_, &recv_over_.wsabuf_, 1, 0, &recv_flag,
+	// Take the reference under the lock. disconnect() flips the state under the
+	// same lock, so once it has run no new operation can be attached and the
+	// last decrement really is the last one.
+	{
+		std::lock_guard<std::mutex> ll(s_lock_);
+		if (ST_ALLOC != state_ && ST_INGAME != state_) return;
+		pending_ops_.fetch_add(1);
+	}
+	int ret = WSARecv(socket_, &recv_over_.wsabuf_, 1, 0, &recv_flag,
 		&recv_over_.over_, 0);
+	// A synchronous failure produces no completion notification. Without a
+	// pending recv nothing else will notice this session is gone, so close it here.
+	if (SOCKET_ERROR == ret && WSA_IO_PENDING != WSAGetLastError()) {
+		disconnect(id_);
+		on_op_done(id_);
+	}
 }
 
 void SESSION::do_send(void* packet)
 {
+	// NPC slots have no socket, and a closing session must not take a new
+	// reference. Callers check the state before sending, but that check and this
+	// call are not atomic, so re-check it here while holding the lock.
+	{
+		std::lock_guard<std::mutex> ll(s_lock_);
+		if (ST_INGAME != state_ || id_ >= MAX_USER) return;
+		pending_ops_.fetch_add(1);
+	}
 	OVER_EXP* sdata = new OVER_EXP{ reinterpret_cast<char*>(packet) };
-	WSASend(socket_, &sdata->wsabuf_, 1, 0, 0, &sdata->over_, 0);
+	int ret = WSASend(socket_, &sdata->wsabuf_, 1, 0, 0, &sdata->over_, 0);
+	// No completion notification on a synchronous failure, so release it here.
+	// The pending recv will report the dead socket and drive the disconnect.
+	if (SOCKET_ERROR == ret && WSA_IO_PENDING != WSAGetLastError()) {
+		delete sdata;
+		on_op_done(id_);
+	}
 }
 
 void SESSION::send_login_info_packet()

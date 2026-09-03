@@ -9,7 +9,9 @@
 #include "GameObject.h"
 #include "protocol.h"
 
-enum S_STATE { ST_FREE, ST_ALLOC, ST_INGAME };
+// ST_CLOSING : the session is being torn down but still has outstanding
+// operations, so the slot must not be handed to a new client yet.
+enum S_STATE { ST_FREE, ST_ALLOC, ST_INGAME, ST_CLOSING };
 enum C_CLASS{WARRIOR, MAGE, PRIST};
 
 class SESSION {
@@ -40,7 +42,8 @@ public:
 	int		dir_;
 	int		damage_;
 	int		armor_;
-	volatile int db_state_;
+	// Outstanding IOCP operations and DB requests that still refer to this slot.
+	std::atomic<int>	pending_ops_;
 	int		login_id_;
 	std::unordered_set<int> view_list_;
 public:
@@ -51,6 +54,7 @@ public:
 		name_[0] = 0;
 		state_ = ST_FREE;
 		prev_remain_ = 0;
+		pending_ops_ = 0;
 		in_use_ = true;
 		level_ = 1;
 		max_hp_ = 100;
@@ -74,3 +78,9 @@ public:
 };
 
 extern std::array<SESSION, MAX_USER + MAX_NPC> clients;
+
+// Defined in server.cpp.
+void disconnect(int c_id);
+// Retires one outstanding operation and frees the slot once a closing session
+// has none left.
+void on_op_done(int c_id);

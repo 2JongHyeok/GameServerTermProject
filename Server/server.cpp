@@ -39,7 +39,19 @@ struct TIMER_EVENT {
 	}
 };
 concurrency::concurrent_priority_queue<TIMER_EVENT> timer_queue;
-concurrency::concurrent_queue<int> db_queue;
+
+enum DB_OP { DB_LOGIN, DB_SAVE };
+// A save request carries a snapshot of the player state instead of a slot
+// number: by the time the DB thread runs, the slot may hold another player.
+struct DB_REQUEST {
+	DB_OP	op;
+	int		c_id;
+	int		login_id;
+	int		level;
+	int		exp;
+	int		x, y;
+};
+concurrency::concurrent_queue<DB_REQUEST> db_queue;
 
 void Load_Map_info() {
 	std::ifstream in{ "mymap.txt" };
@@ -220,16 +232,17 @@ bool can_see_d(int from, int to, int* distance)
 }
 
 
-void get_new_client_id(int& id)
+// Returns -1 when every slot is taken.
+int get_new_client_id()
 {
 	for (int i = 0; i < MAX_USER; ++i) {
 		lock_guard <mutex> ll{ clients[i].s_lock_ };
 		if (clients[i].state_ == ST_FREE) {
 			clients[i].state_ = ST_ALLOC;
-			id = i;
-			return;
+			return i;
 		}
 	}
+	return -1;
 }
 
 void WakeUpNPC(int npc_id)
@@ -249,8 +262,8 @@ void process_packet(int c_id, char* packet)
 		CS_LOGIN_PACKET* p = reinterpret_cast<CS_LOGIN_PACKET*>(packet);
 		clients[c_id].login_id_ = p->id;
 		strcpy_s(clients[c_id].name_, p->name);
-		clients[c_id].db_state_ = 1;
-		db_queue.push(c_id);
+		clients[c_id].pending_ops_.fetch_add(1);
+		db_queue.push(DB_REQUEST{ DB_LOGIN, c_id, p->id, 0, 0, 0, 0 });
 		break;
 	}
 	case CS_MOVE: {
@@ -648,26 +661,59 @@ void do_timer()
 	}
 }
 
+// Tears a session down exactly once. The slot is deliberately NOT freed here:
+// on_op_done() releases it after the last outstanding operation has been
+// retired, so a late completion can never reach a session that was reused.
 void disconnect(int c_id)
 {
-	clients[c_id].in_use_ = false;
-	clients[c_id].vl_.lock();
-	unordered_set <int> vl = clients[c_id].view_list_;
-	clients[c_id].vl_.unlock();
-	for (auto& p_id :vl) {
-		if (is_npc(p_id)) continue;
-		auto& pl = clients[p_id];
-		{
-			lock_guard<mutex> ll(pl.s_lock_);
-			if (ST_INGAME != pl.state_) continue;
-		}
-		if (pl.id_ == c_id) continue;
-		pl.send_remove_player_packet(c_id);
+	S_STATE prev_state;
+	{
+		lock_guard<mutex> ll(clients[c_id].s_lock_);
+		prev_state = clients[c_id].state_;
+		// Already closing or free : another completion got here first.
+		if (ST_ALLOC != prev_state && ST_INGAME != prev_state) return;
+		clients[c_id].state_ = ST_CLOSING;
 	}
-	closesocket(clients[c_id].socket_);
 
+	clients[c_id].in_use_ = false;
+
+	// A session that never finished logging in is in no sector and has nothing
+	// worth saving.
+	if (ST_INGAME == prev_state) {
+		Sector.removeObject(clients[c_id].pos_);
+
+		clients[c_id].vl_.lock();
+		unordered_set <int> vl = clients[c_id].view_list_;
+		clients[c_id].vl_.unlock();
+		for (auto& p_id : vl) {
+			if (is_npc(p_id)) continue;
+			auto& pl = clients[p_id];
+			{
+				lock_guard<mutex> ll(pl.s_lock_);
+				if (ST_INGAME != pl.state_) continue;
+			}
+			if (pl.id_ == c_id) continue;
+			pl.send_remove_player_packet(c_id);
+		}
+
+		// Not counted as a slot reference : the request carries a snapshot, so
+		// the DB thread never reads this slot and the slot can be reused while
+		// the save is still queued.
+		db_queue.push(DB_REQUEST{ DB_SAVE, c_id, clients[c_id].login_id_,
+			clients[c_id].level_, clients[c_id].exp_,
+			clients[c_id].pos_.x_.load(), clients[c_id].pos_.y_.load() });
+	}
+
+	closesocket(clients[c_id].socket_);
+}
+
+void on_op_done(int c_id)
+{
+	// Not the last reference : somebody else still needs the slot.
+	if (1 != clients[c_id].pending_ops_.fetch_sub(1)) return;
 	lock_guard<mutex> ll(clients[c_id].s_lock_);
-	clients[c_id].state_ = ST_FREE;
+	if (ST_CLOSING == clients[c_id].state_)
+		clients[c_id].state_ = ST_FREE;
 }
 void do_npc_random_move(int npc_id)
 {
@@ -868,195 +914,227 @@ void worker_thread(HANDLE h_iocp)
 		ULONG_PTR key;
 		WSAOVERLAPPED* over = nullptr;
 		BOOL ret = GetQueuedCompletionStatus(h_iocp, &num_bytes, &key, &over, INFINITE);
+		int client_id = static_cast<int>(key);
 		OVER_EXP* ex_over = reinterpret_cast<OVER_EXP*>(over);
 		if (FALSE == ret) {
 			if (ex_over->comp_type_ == OP_ACCEPT) cout << "Accept Error";
 			else {
-				cout << "GQCS Error on client[" << key << "]\n";
-				clients[key].db_state_ = 2;
-				db_queue.push(key);
-				disconnect(static_cast<int>(key));
+				cout << "GQCS Error on client[" << client_id << "]\n";
+				disconnect(client_id);
 				if (ex_over->comp_type_ == OP_SEND) delete ex_over;
+				on_op_done(client_id);
 				continue;
 			}
 		}
 
 		if ((0 == num_bytes) && ((ex_over->comp_type_ == OP_RECV) || (ex_over->comp_type_ == OP_SEND))) {
-			disconnect(static_cast<int>(key));
-			clients[key].db_state_ = 2;
-			db_queue.push(key);
+			disconnect(client_id);
 			if (ex_over->comp_type_ == OP_SEND) delete ex_over;
+			on_op_done(client_id);
 			continue;
 		}
 
 		switch (ex_over->comp_type_) {
 		case OP_ACCEPT: {
-			int client_id;
-			get_new_client_id(client_id);
-			if (client_id != -1) {
-				clients[client_id].pos_.x_ = 0;
-				clients[client_id].pos_.y_ = 0;
-				clients[client_id].pos_.id_ = client_id;
-				clients[client_id].id_ = client_id;
-				clients[client_id].name_[0] = 0;
-				clients[client_id].prev_remain_ = 0;
-				clients[client_id].socket_ = g_c_socket;
+			int new_id = get_new_client_id();
+			if (new_id != -1) {
+				clients[new_id].pos_.x_ = 0;
+				clients[new_id].pos_.y_ = 0;
+				clients[new_id].pos_.id_ = new_id;
+				clients[new_id].id_ = new_id;
+				clients[new_id].name_[0] = 0;
+				clients[new_id].prev_remain_ = 0;
+				clients[new_id].socket_ = g_c_socket;
+				// Wipe whatever the previous owner of this slot left behind.
+				clients[new_id].vl_.lock();
+				clients[new_id].view_list_.clear();
+				clients[new_id].vl_.unlock();
+				clients[new_id].level_ = 1;
+				clients[new_id].max_hp_ = 100;
+				clients[new_id].hp_ = clients[new_id].max_hp_;
+				clients[new_id].exp_ = 0;
+				clients[new_id].max_exp_ = 100;
+				clients[new_id].respawn_x_ = 0;
+				clients[new_id].respawn_y_ = 0;
+				clients[new_id].pending_ops_ = 0;
 
 				CreateIoCompletionPort(reinterpret_cast<HANDLE>(g_c_socket),
-					h_iocp, client_id, 0);
-				clients[client_id].do_recv();
-				g_c_socket = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
+					h_iocp, new_id, 0);
+				clients[new_id].do_recv();
 			}
 			else {
 				cout << "Max user exceeded.\n";
+				// Reject : this socket is accepted but unusable, and reusing it
+				// for the next AcceptEx would break every later accept.
+				closesocket(g_c_socket);
 			}
+			g_c_socket = WSASocket(AF_INET, SOCK_STREAM, 0, NULL, 0, WSA_FLAG_OVERLAPPED);
 			ZeroMemory(&g_a_over.over_, sizeof(g_a_over.over_));
 			int addr_size = sizeof(SOCKADDR_IN);
 			AcceptEx(g_s_socket, g_c_socket, g_a_over.send_buf_, 0, addr_size + 16, addr_size + 16, 0, &g_a_over.over_);
 			break;
 		}
 		case OP_RECV: {
-			int remain_data = num_bytes + clients[key].prev_remain_;
+			int remain_data = num_bytes + clients[client_id].prev_remain_;
 			char* p = ex_over->send_buf_;
 			while (remain_data > 0) {
 				int packet_size = *reinterpret_cast<unsigned short*>(p);
 				if (packet_size <= remain_data) {
-					process_packet(static_cast<int>(key), p);
+					process_packet(client_id, p);
 					p = p + packet_size;
 					remain_data = remain_data - packet_size;
 				}
 				else break;
 			}
-			clients[key].prev_remain_ = remain_data;
+			clients[client_id].prev_remain_ = remain_data;
 			if (remain_data > 0) {
 				memcpy(ex_over->send_buf_, p, remain_data);
 			}
-			clients[key].do_recv();
+			clients[client_id].do_recv();
+			on_op_done(client_id);
 			break;
 		}
 		case OP_SEND: {
 			delete ex_over;
+			on_op_done(client_id);
 			break;
 		}
 		case OP_NPC_MOVE: {
 			bool keep_alive = false;
 
 			unordered_set<int> vl;
-			Sector.getNearbyObjects(vl, clients[key].pos_);
+			Sector.getNearbyObjects(vl, clients[client_id].pos_);
 
 			for (int pl : vl) {
 				if (clients[pl].in_use_ == false) continue;
-				if (pl == key) continue;
+				if (pl == client_id) continue;
 				if (clients[pl].state_ != ST_INGAME) continue;
-				if (false == can_npc_see(pl, key)) continue;
+				if (false == can_npc_see(pl, client_id)) continue;
 				if (!is_pc(pl)) continue;
 				keep_alive = true;
 				break;
 			}
 
 			if (keep_alive) {
-				do_npc_random_move(static_cast<int>(key));
-				if (clients[static_cast<int>(key)].in_use_ == false)
+				do_npc_random_move(client_id);
+				if (clients[client_id].in_use_ == false)
 					break;
-				TIMER_EVENT ev{ key, chrono::system_clock::now() + 1s, EV_RANDOM_MOVE, 0 };
+				TIMER_EVENT ev{ client_id, chrono::system_clock::now() + 1s, EV_RANDOM_MOVE, 0 };
 				timer_queue.push(ev);
 			}
 			else {
-				clients[key].is_active_ = false;
+				clients[client_id].is_active_ = false;
 			}
 			delete ex_over;
 			break;
 		}
 		case OP_NPC_RESURRECTION: {
-			clients[key].in_use_ = true;
-			clients[key].level_*= 2;
-			clients[key].hp_ = clients[key].level_*50;
-			clients[key].damage_ = clients[key].level_*2;
+			clients[client_id].in_use_ = true;
+			clients[client_id].level_*= 2;
+			clients[client_id].hp_ = clients[client_id].level_*50;
+			clients[client_id].damage_ = clients[client_id].level_*2;
 
 			unordered_set<int> vl;
-			Sector.getNearbyObjects(vl, clients[key].pos_);
+			Sector.getNearbyObjects(vl, clients[client_id].pos_);
 			unordered_set<int> new_vl;
-			
+
 			for (int pl : vl) {
 				if (clients[pl].in_use_ == false) continue;
-				if (pl == key) continue;
+				if (pl == client_id) continue;
 				if (clients[pl].state_ != ST_INGAME) continue;
-				if (false == can_see(pl, key)) continue;
+				if (false == can_see(pl, client_id)) continue;
 				if (!is_pc(pl)) continue;
 				new_vl.insert(pl);
 			}
-			
+
 			for (auto& pl : new_vl) {
 				if (clients[pl].in_use_ == false) continue;
-				clients[pl].send_add_object_packet(key);
+				clients[pl].send_add_object_packet(client_id);
 			}
 			break;
 		}
 		case OP_LOGIN: {
-			clients[key].pos_.id_ = key;
+			// The client may have dropped while the DB lookup was in flight.
+			bool alive = false;
+			{
+				lock_guard<mutex> ll(clients[client_id].s_lock_);
+				if (ST_ALLOC == clients[client_id].state_) {
+					clients[client_id].state_ = ST_INGAME;
+					alive = true;
+				}
+			}
+			if (false == alive) {
+				delete ex_over;
+				on_op_done(client_id);
+				break;
+			}
+
+			clients[client_id].pos_.id_ = client_id;
 			int character = rand() % 3;
 			if (character == 0) {
-				clients[key].character_ = WARRIOR;
-				clients[key].damage_ = WARRIOR_STAT_ATK * clients[key].level_;
-				clients[key].armor_ = WARRIOR_STAT_ARMOR * clients[key].level_;
+				clients[client_id].character_ = WARRIOR;
+				clients[client_id].damage_ = WARRIOR_STAT_ATK * clients[client_id].level_;
+				clients[client_id].armor_ = WARRIOR_STAT_ARMOR * clients[client_id].level_;
 			}
 			else if (character == 1) {
-				clients[key].character_ = MAGE;
-				clients[key].damage_ = MAGE_STAT_ATK * clients[key].level_;
-				clients[key].armor_ = MAGE_STAT_ARMOR * clients[key].level_;
+				clients[client_id].character_ = MAGE;
+				clients[client_id].damage_ = MAGE_STAT_ATK * clients[client_id].level_;
+				clients[client_id].armor_ = MAGE_STAT_ARMOR * clients[client_id].level_;
 			}
 			else if (character == 2) {
-				clients[key].character_ = PRIST;
-				clients[key].damage_ = PRIST_STAT_ATK * clients[key].level_;
-				clients[key].armor_ = PRIST_STAT_ARMOR * clients[key].level_;
+				clients[client_id].character_ = PRIST;
+				clients[client_id].damage_ = PRIST_STAT_ATK * clients[client_id].level_;
+				clients[client_id].armor_ = PRIST_STAT_ARMOR * clients[client_id].level_;
 			}
-			clients[key].state_ = ST_INGAME;
 
-			clients[key].in_use_ = true;
-			clients[key].send_login_info_packet();
-			Sector.addObject(clients[key].pos_);
+			clients[client_id].in_use_ = true;
+			clients[client_id].send_login_info_packet();
+			Sector.addObject(clients[client_id].pos_);
 
 			unordered_set <int> vl;
-			Sector.getNearbyObjects(vl, clients[key].pos_);
+			Sector.getNearbyObjects(vl, clients[client_id].pos_);
 			unordered_set <int> new_vl;
 			for (auto& pl : vl) {
 				if (clients[pl].in_use_ == false) continue;
-				if (pl == key) continue;
+				if (pl == client_id) continue;
 				if (clients[pl].state_ != ST_INGAME) continue;
-				if (false == can_see(pl, key)) continue;
+				if (false == can_see(pl, client_id)) continue;
 				new_vl.insert(pl);
 			}
 
-			clients[key].vl_.lock();
-			unordered_set<int> old_vlist = clients[key].view_list_;
-			clients[key].vl_.unlock();
+			clients[client_id].vl_.lock();
+			unordered_set<int> old_vlist = clients[client_id].view_list_;
+			clients[client_id].vl_.unlock();
 
 			for (auto pl : new_vl) {
 				auto& cpl = clients[pl];
 				if (is_pc(pl)) {
 					cpl.vl_.lock();
-					if (clients[pl].view_list_.count(key)) {
+					if (clients[pl].view_list_.count(client_id)) {
 						cpl.vl_.unlock();
-						clients[pl].send_move_packet(key);
+						clients[pl].send_move_packet(client_id);
 					}
 					else {
 						cpl.vl_.unlock();
-						clients[pl].send_add_object_packet(key);
+						clients[pl].send_add_object_packet(client_id);
 					}
 				}
 
 				if (old_vlist.count(pl) == 0) {
-					clients[key].send_add_object_packet(pl);
+					clients[client_id].send_add_object_packet(pl);
 					if (false == is_pc(pl))
 						WakeUpNPC(pl);
 				}
 			}
+			delete ex_over;
+			on_op_done(client_id);
 			break;
 		}
 		case OP_LOGIN_FAIL: {
-			cout << key << " : LOGIN_ FAIL\n";
-			disconnect(static_cast<int>(key));
-			if (ex_over->comp_type_ == OP_SEND) delete ex_over;
+			cout << client_id << " : LOGIN_ FAIL\n";
+			disconnect(client_id);
+			delete ex_over;
+			on_op_done(client_id);
 			break;
 		}
 		}
@@ -1106,19 +1184,19 @@ void connect_db() {
 					if (SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt) == SQL_SUCCESS) {
 						cout << "SQLAllocHandle OK\n";
 						while (true) {
-							if (db_queue.empty()) {
+							DB_REQUEST req;
+							if (false == db_queue.try_pop(req)) {
 								this_thread::sleep_for(5ms);
 								continue;
 							}
-							int userId;
-							db_queue.try_pop(userId);
+							int userId = req.c_id;
 							if (SQL_SUCCESS != SQLAllocHandle(SQL_HANDLE_STMT, hdbc, &hstmt)) {
 								cout << "SQLAllockHandleError\n";
 								exit(1);
 							}
-							if (clients[userId].db_state_ == 1) {
+							if (req.op == DB_LOGIN) {
 								wstring func = L"EXEC SearchClient ";
-								func += std::to_wstring(clients[userId].login_id_);
+								func += std::to_wstring(req.login_id);
 								retcode = SQLExecDirect(hstmt, (SQLWCHAR*)func.c_str(), SQL_NTS);
 								if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
 									SQLBindCol(hstmt, 1, SQL_C_WCHAR, &userName, sizeof(userName), &cbName);
@@ -1149,30 +1227,34 @@ void connect_db() {
 											OVER_EXP* ov = new OVER_EXP;
 											ov->comp_type_ = OP_LOGIN_FAIL;
 											PostQueuedCompletionStatus(h_iocp, 1, userId, &ov->over_);
-											//cout << clients[userId].login_id_ << " Login Fail\n";
+											//cout << req.login_id << " Login Fail\n";
 											break;
 										}
 									}
 								}
 								else {
 									HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
+									// Nothing was posted, so retire the request here.
+									OVER_EXP* ov = new OVER_EXP;
+									ov->comp_type_ = OP_LOGIN_FAIL;
+									PostQueuedCompletionStatus(h_iocp, 1, userId, &ov->over_);
 								}
 							}
-							else if (clients[userId].db_state_ == 2) {
+							else {
+								// Values come from the request, not from clients[] :
+								// the slot may already belong to another player.
 								wstring func = L"EXEC SaveData ";
-								func += std::to_wstring(clients[userId].login_id_);
+								func += std::to_wstring(req.login_id);
 								func += L", ";
-								func += std::to_wstring(clients[userId].level_);
+								func += std::to_wstring(req.level);
 								func += L", ";
-								func += std::to_wstring(clients[userId].exp_);
-								func += L", ";	
-								func += std::to_wstring(clients[userId].pos_.x_);
+								func += std::to_wstring(req.exp);
 								func += L", ";
-								func += std::to_wstring(clients[userId].pos_.y_);
+								func += std::to_wstring(req.x);
+								func += L", ";
+								func += std::to_wstring(req.y);
 								retcode = SQLExecDirect(hstmt, (SQLWCHAR*)func.c_str(), SQL_NTS);
-								if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO)
-									continue;
-								else
+								if (retcode != SQL_SUCCESS && retcode != SQL_SUCCESS_WITH_INFO)
 									HandleDiagnosticRecord(hstmt, SQL_HANDLE_STMT, retcode);
 							}
 							SQLFreeHandle(SQL_HANDLE_STMT, hstmt);
