@@ -236,11 +236,7 @@ bool can_see_d(int from, int to, int* distance)
 int get_new_client_id()
 {
 	for (int i = 0; i < MAX_USER; ++i) {
-		lock_guard <mutex> ll{ clients[i].s_lock_ };
-		if (clients[i].state_ == ST_FREE) {
-			clients[i].state_ = ST_ALLOC;
-			return i;
-		}
+		if (clients[i].try_alloc()) return i;
 	}
 	return -1;
 }
@@ -262,7 +258,8 @@ void process_packet(int c_id, char* packet)
 		CS_LOGIN_PACKET* p = reinterpret_cast<CS_LOGIN_PACKET*>(packet);
 		clients[c_id].login_id_ = p->id;
 		strcpy_s(clients[c_id].name_, p->name);
-		clients[c_id].pending_ops_.fetch_add(1);
+		// The DB request keeps the slot alive until OP_LOGIN retires it.
+		clients[c_id].acquire_op();
 		db_queue.push(DB_REQUEST{ DB_LOGIN, c_id, p->id, 0, 0, 0, 0 });
 		break;
 	}
@@ -313,7 +310,7 @@ void process_packet(int c_id, char* packet)
 		for (int pl : vl) {
 			if (clients[pl].in_use_ == false) continue;
 			if (pl == c_id) continue;
-			if (clients[pl].state_ != ST_INGAME) continue;
+			if (clients[pl].state() != ST_INGAME) continue;
 			if (false == can_see(pl, c_id)) continue;
 			new_vl.insert(pl);
 		}
@@ -365,7 +362,7 @@ void process_packet(int c_id, char* packet)
 			for (int pl : vl) {
 				if (clients[pl].in_use_ == false) continue;
 				if (pl == c_id) continue;
-				if (clients[pl].state_ != ST_INGAME) continue;
+				if (clients[pl].state() != ST_INGAME) continue;
 				if (false == can_see(pl, c_id)) continue;
 				if (!in_my_attack_range(pl, c_id, c_class, AUTO, dir)) continue;
 				new_vl.insert(pl);
@@ -409,7 +406,7 @@ void process_packet(int c_id, char* packet)
 						for (int pll : vl) {
 							if (clients[pll].in_use_ == false) continue;
 							if (pll == pl) continue;
-							if (clients[pll].state_ != ST_INGAME) continue;
+							if (clients[pll].state() != ST_INGAME) continue;
 							if (false == can_see(pll, pl)) continue;
 							new_vl.insert(pll);
 						}
@@ -424,7 +421,7 @@ void process_packet(int c_id, char* packet)
 						for (int pll : vl) {
 							if (clients[pll].in_use_ == false) continue;
 							if (pll == pl) continue;
-							if (clients[pll].state_ != ST_INGAME) continue;
+							if (clients[pll].state() != ST_INGAME) continue;
 							if (false == can_see(pll, pl)) continue;
 							new_vl.insert(pll);
 						}
@@ -455,7 +452,7 @@ void process_packet(int c_id, char* packet)
 			for (int pl : vl) {
 				if (clients[pl].in_use_ == false) continue;
 				if (pl == c_id) continue;
-				if (clients[pl].state_ != ST_INGAME) continue;
+				if (clients[pl].state() != ST_INGAME) continue;
 				if (false == can_see(pl, c_id)) continue;
 				if (!is_npc(pl))continue;
 				if (!in_my_attack_range(pl, c_id, c_class, AUTO, dir)) continue;
@@ -500,7 +497,7 @@ void process_packet(int c_id, char* packet)
 					for (int pll : vl) {
 						if (clients[pll].in_use_ == false) continue;
 						if (pll == pl) continue;
-						if (clients[pll].state_ != ST_INGAME) continue;
+						if (clients[pll].state() != ST_INGAME) continue;
 						if (false == can_see(pll, pl)) continue;
 						new_vl.insert(pll);
 					}
@@ -515,7 +512,7 @@ void process_packet(int c_id, char* packet)
 					for (int pll : vl) {
 						if (clients[pll].in_use_ == false) continue;
 						if (pll == pl) continue;
-						if (clients[pll].state_ != ST_INGAME) continue;
+						if (clients[pll].state() != ST_INGAME) continue;
 						if (false == can_see(pll, pl)) continue;
 						new_vl.insert(pll);
 					}
@@ -554,7 +551,7 @@ void process_packet(int c_id, char* packet)
 		for (int pl : vl) {
 			if (clients[pl].in_use_ == false) continue;
 			if (pl == c_id) continue;
-			if (clients[pl].state_ != ST_INGAME) continue;
+			if (clients[pl].state() != ST_INGAME) continue;
 			if (false == can_see(pl, c_id)) continue;
 			new_vl.insert(pl);
 		}
@@ -600,7 +597,8 @@ void InitializeNPC()
 		clients[i].pos_.id_ = i;
 		Sector.addObject(clients[i].pos_);
 		clients[i].id_ = i;
-		clients[i].state_ = ST_INGAME;
+		// NPC slots stay INGAME with a zero op count for their whole life.
+		clients[i].life_ = ST_INGAME;
 		if (rand() % 20 == 1) {
 			sprintf_s(clients[i].name_, "BOSS");
 			int level = rand() % 40 + 100;
@@ -666,14 +664,10 @@ void do_timer()
 // retired, so a late completion can never reach a session that was reused.
 void disconnect(int c_id)
 {
-	S_STATE prev_state;
-	{
-		lock_guard<mutex> ll(clients[c_id].s_lock_);
-		prev_state = clients[c_id].state_;
-		// Already closing or free : another completion got here first.
-		if (ST_ALLOC != prev_state && ST_INGAME != prev_state) return;
-		clients[c_id].state_ = ST_CLOSING;
-	}
+	// One atomic ALLOC/INGAME -> CLOSING. Whoever wins gets the previous state;
+	// a later completion sees CLOSING/FREE and bails out here.
+	S_STATE prev_state = clients[c_id].try_close();
+	if (ST_ALLOC != prev_state && ST_INGAME != prev_state) return;
 
 	clients[c_id].in_use_ = false;
 
@@ -688,10 +682,7 @@ void disconnect(int c_id)
 		for (auto& p_id : vl) {
 			if (is_npc(p_id)) continue;
 			auto& pl = clients[p_id];
-			{
-				lock_guard<mutex> ll(pl.s_lock_);
-				if (ST_INGAME != pl.state_) continue;
-			}
+			if (ST_INGAME != pl.state()) continue;
 			if (pl.id_ == c_id) continue;
 			pl.send_remove_player_packet(c_id);
 		}
@@ -709,11 +700,8 @@ void disconnect(int c_id)
 
 void on_op_done(int c_id)
 {
-	// Not the last reference : somebody else still needs the slot.
-	if (1 != clients[c_id].pending_ops_.fetch_sub(1)) return;
-	lock_guard<mutex> ll(clients[c_id].s_lock_);
-	if (ST_CLOSING == clients[c_id].state_)
-		clients[c_id].state_ = ST_FREE;
+	// Drop one reference; the last one of a closing slot frees it in the same CAS.
+	clients[c_id].release_op();
 }
 void do_npc_random_move(int npc_id)
 {
@@ -728,7 +716,7 @@ void do_npc_random_move(int npc_id)
 
 	for (int obj : vl) {
 		if (clients[obj].in_use_ == false) continue;
-		if (ST_INGAME != clients[obj].state_) continue;
+		if (ST_INGAME != clients[obj].state()) continue;
 		if (true == is_npc(obj)) continue;
 		if (true == can_see_d(clients[npc_id].id_, obj, &distance)) {
 			if (distance < min_distance) {
@@ -788,7 +776,7 @@ void do_npc_random_move(int npc_id)
 			for (int pl : vl) {
 				if (clients[pl].in_use_ == false) continue;
 				if (pl == nearest) continue;
-				if (clients[pl].state_ != ST_INGAME) continue;
+				if (clients[pl].state() != ST_INGAME) continue;
 				if (false == can_see(pl, nearest)) continue;
 				new_vl.insert(pl);
 			}
@@ -872,7 +860,7 @@ void do_npc_random_move(int npc_id)
 
 	for (int obj : vl) {
 		if (clients[obj].in_use_ == false) continue;
-		if (ST_INGAME != clients[obj].state_) continue;
+		if (ST_INGAME != clients[obj].state()) continue;
 		if (is_npc(obj)) continue;
 		if (can_npc_see(clients[npc_id].id_, obj))
 			new_vl.insert(obj);
@@ -956,7 +944,7 @@ void worker_thread(HANDLE h_iocp)
 				clients[new_id].max_exp_ = 100;
 				clients[new_id].respawn_x_ = 0;
 				clients[new_id].respawn_y_ = 0;
-				clients[new_id].pending_ops_ = 0;
+				// try_alloc() gave this slot a zero op count; nothing to reset.
 
 				CreateIoCompletionPort(reinterpret_cast<HANDLE>(g_c_socket),
 					h_iocp, new_id, 0);
@@ -1008,7 +996,7 @@ void worker_thread(HANDLE h_iocp)
 			for (int pl : vl) {
 				if (clients[pl].in_use_ == false) continue;
 				if (pl == client_id) continue;
-				if (clients[pl].state_ != ST_INGAME) continue;
+				if (clients[pl].state() != ST_INGAME) continue;
 				if (false == can_npc_see(pl, client_id)) continue;
 				if (!is_pc(pl)) continue;
 				keep_alive = true;
@@ -1041,7 +1029,7 @@ void worker_thread(HANDLE h_iocp)
 			for (int pl : vl) {
 				if (clients[pl].in_use_ == false) continue;
 				if (pl == client_id) continue;
-				if (clients[pl].state_ != ST_INGAME) continue;
+				if (clients[pl].state() != ST_INGAME) continue;
 				if (false == can_see(pl, client_id)) continue;
 				if (!is_pc(pl)) continue;
 				new_vl.insert(pl);
@@ -1054,15 +1042,9 @@ void worker_thread(HANDLE h_iocp)
 			break;
 		}
 		case OP_LOGIN: {
-			// The client may have dropped while the DB lookup was in flight.
-			bool alive = false;
-			{
-				lock_guard<mutex> ll(clients[client_id].s_lock_);
-				if (ST_ALLOC == clients[client_id].state_) {
-					clients[client_id].state_ = ST_INGAME;
-					alive = true;
-				}
-			}
+			// The client may have dropped while the DB lookup was in flight;
+			// set_ingame() succeeds only if the slot is still ALLOC.
+			bool alive = clients[client_id].set_ingame();
 			if (false == alive) {
 				delete ex_over;
 				on_op_done(client_id);
@@ -1097,7 +1079,7 @@ void worker_thread(HANDLE h_iocp)
 			for (auto& pl : vl) {
 				if (clients[pl].in_use_ == false) continue;
 				if (pl == client_id) continue;
-				if (clients[pl].state_ != ST_INGAME) continue;
+				if (clients[pl].state() != ST_INGAME) continue;
 				if (false == can_see(pl, client_id)) continue;
 				new_vl.insert(pl);
 			}

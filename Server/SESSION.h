@@ -5,12 +5,14 @@
 #include<unordered_set>
 #include<array>
 #include<atomic>
+#include<cstdint>
 #include "OVER_EXP.h"
 #include "GameObject.h"
 #include "protocol.h"
 
 // ST_CLOSING : the session is being torn down but still has outstanding
 // operations, so the slot must not be handed to a new client yet.
+// Values 0..3 fit in the low 2 bits of SESSION::life_; do not renumber.
 enum S_STATE { ST_FREE, ST_ALLOC, ST_INGAME, ST_CLOSING };
 enum C_CLASS{WARRIOR, MAGE, PRIST};
 
@@ -18,8 +20,12 @@ class SESSION {
 	OVER_EXP recv_over_;
 
 public:
-	std::mutex s_lock_;
-	S_STATE state_;
+	// Slot lifecycle packed into one atomic word so the state and the
+	// outstanding-operation count change together in a single CAS, with no
+	// per-send lock. bits 0-1 : S_STATE, bits 2-31 : outstanding op count.
+	std::atomic<uint32_t> life_;
+	static constexpr uint32_t STATE_MASK = 0x3u;
+	static constexpr uint32_t OP_ONE = 0x4u;   // one outstanding operation (count starts at bit 2)
 	std::atomic_bool	is_active_;
 	int id_;
 	SOCKET socket_;
@@ -42,8 +48,6 @@ public:
 	int		dir_;
 	int		damage_;
 	int		armor_;
-	// Outstanding IOCP operations and DB requests that still refer to this slot.
-	std::atomic<int>	pending_ops_;
 	int		login_id_;
 	std::unordered_set<int> view_list_;
 public:
@@ -52,9 +56,8 @@ public:
 		id_ = -1;
 		socket_ = 0;
 		name_[0] = 0;
-		state_ = ST_FREE;
+		life_ = ST_FREE;
 		prev_remain_ = 0;
-		pending_ops_ = 0;
 		in_use_ = true;
 		level_ = 1;
 		max_hp_ = 100;
@@ -63,6 +66,63 @@ public:
 	}
 
 	~SESSION() {}
+
+	// Current state, read without a lock.
+	S_STATE state() const {
+		return static_cast<S_STATE>(life_.load() & STATE_MASK);
+	}
+
+	// Take a slot reference if it is still live. do_recv accepts ALLOC or
+	// INGAME, do_send accepts INGAME only. Returns false untouched otherwise.
+	bool try_acquire_op(bool ingame_only) {
+		uint32_t cur = life_.load();
+		for (;;) {
+			S_STATE s = static_cast<S_STATE>(cur & STATE_MASK);
+			bool ok = (s == ST_INGAME) || (!ingame_only && s == ST_ALLOC);
+			if (!ok) return false;
+			if (life_.compare_exchange_weak(cur, cur + OP_ONE)) return true;
+		}
+	}
+
+	// Add a reference when a live one is already held (login queues a DB
+	// request while its recv completion is still in flight), so no state check.
+	void acquire_op() { life_.fetch_add(OP_ONE); }
+
+	// Retire one reference; the last one of a closing session frees the slot.
+	void release_op() {
+		uint32_t cur = life_.load();
+		for (;;) {
+			uint32_t next = cur - OP_ONE;
+			if ((next >> 2) == 0 && (cur & STATE_MASK) == ST_CLOSING) next = ST_FREE;
+			if (life_.compare_exchange_weak(cur, next)) return;
+		}
+	}
+
+	// FREE -> ALLOC for a fresh slot; a FREE slot always has a zero count.
+	bool try_alloc() {
+		uint32_t expected = ST_FREE;
+		return life_.compare_exchange_strong(expected, ST_ALLOC);
+	}
+
+	// ALLOC -> INGAME once login finishes; false if the client already dropped.
+	bool set_ingame() {
+		uint32_t cur = life_.load();
+		for (;;) {
+			if ((cur & STATE_MASK) != ST_ALLOC) return false;
+			if (life_.compare_exchange_weak(cur, (cur & ~STATE_MASK) | ST_INGAME)) return true;
+		}
+	}
+
+	// ALLOC/INGAME -> CLOSING, count preserved. Returns the previous state, or
+	// ST_CLOSING/ST_FREE if another completion already closed the slot.
+	S_STATE try_close() {
+		uint32_t cur = life_.load();
+		for (;;) {
+			S_STATE s = static_cast<S_STATE>(cur & STATE_MASK);
+			if (s != ST_ALLOC && s != ST_INGAME) return s;
+			if (life_.compare_exchange_weak(cur, (cur & ~STATE_MASK) | ST_CLOSING)) return s;
+		}
+	}
 
 	void do_recv();
 

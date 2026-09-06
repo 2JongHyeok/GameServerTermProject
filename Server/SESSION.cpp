@@ -1,5 +1,8 @@
 #include "SESSION.h"
 
+// The lifecycle word must be lock-free or the whole point (no per-send lock) is lost.
+static_assert(std::atomic<uint32_t>::is_always_lock_free, "SESSION::life_ must be lock-free");
+
 std::array<SESSION, MAX_USER + MAX_NPC> clients;
 
 void SESSION::do_recv()
@@ -8,14 +11,10 @@ void SESSION::do_recv()
 	memset(&recv_over_.over_, 0, sizeof(recv_over_.over_));
 	recv_over_.wsabuf_.len = BUF_SIZE - prev_remain_;
 	recv_over_.wsabuf_.buf = recv_over_.send_buf_ + prev_remain_;
-	// Take the reference under the lock. disconnect() flips the state under the
-	// same lock, so once it has run no new operation can be attached and the
-	// last decrement really is the last one.
-	{
-		std::lock_guard<std::mutex> ll(s_lock_);
-		if (ST_ALLOC != state_ && ST_INGAME != state_) return;
-		pending_ops_.fetch_add(1);
-	}
+	// Take the reference only if the slot is still live. try_close() flips the
+	// state to CLOSING in one atomic step, so once it has run no new operation
+	// can attach and the last release really is the last one.
+	if (!try_acquire_op(false)) return;
 	int ret = WSARecv(socket_, &recv_over_.wsabuf_, 1, 0, &recv_flag,
 		&recv_over_.over_, 0);
 	// A synchronous failure produces no completion notification. Without a
@@ -30,12 +29,8 @@ void SESSION::do_send(void* packet)
 {
 	// NPC slots have no socket, and a closing session must not take a new
 	// reference. Callers check the state before sending, but that check and this
-	// call are not atomic, so re-check it here while holding the lock.
-	{
-		std::lock_guard<std::mutex> ll(s_lock_);
-		if (ST_INGAME != state_ || id_ >= MAX_USER) return;
-		pending_ops_.fetch_add(1);
-	}
+	// call are not atomic, so try_acquire_op re-checks INGAME atomically here.
+	if (id_ >= MAX_USER || !try_acquire_op(true)) return;
 	OVER_EXP* sdata = new OVER_EXP{ reinterpret_cast<char*>(packet) };
 	int ret = WSASend(socket_, &sdata->wsabuf_, 1, 0, 0, &sdata->over_, 0);
 	// No completion notification on a synchronous failure, so release it here.
