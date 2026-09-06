@@ -1005,10 +1005,15 @@ void worker_thread(HANDLE h_iocp)
 
 			if (keep_alive) {
 				do_npc_random_move(client_id);
-				if (clients[client_id].in_use_ == false)
-					break;
-				TIMER_EVENT ev{ client_id, chrono::system_clock::now() + 1s, EV_RANDOM_MOVE, 0 };
-				timer_queue.push(ev);
+				if (clients[client_id].in_use_ == false) {
+					// Died while this event was in flight. End the move loop cleanly so
+					// WakeUpNPC() can re-arm it after resurrection, and fall through to delete.
+					clients[client_id].is_active_ = false;
+				}
+				else {
+					TIMER_EVENT ev{ client_id, chrono::system_clock::now() + 1s, EV_RANDOM_MOVE, 0 };
+					timer_queue.push(ev);
+				}
 			}
 			else {
 				clients[client_id].is_active_ = false;
@@ -1039,6 +1044,10 @@ void worker_thread(HANDLE h_iocp)
 				if (clients[pl].in_use_ == false) continue;
 				clients[pl].send_add_object_packet(client_id);
 			}
+			// Players are already watching: start moving now instead of waiting for
+			// someone to walk into view. The move loop ended at death, so this re-arms it.
+			if (!new_vl.empty()) WakeUpNPC(client_id);
+			delete ex_over;
 			break;
 		}
 		case OP_LOGIN: {
