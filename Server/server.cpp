@@ -384,18 +384,16 @@ void process_packet(int c_id, char* packet)
 						}
 					}
 					if (kill) {	// 몬스터를 죽였을경우 처리
-						clients[c_id].exp_ += clients[pl].level_ * 50;
+						// Exp stops at the cap so max_exp_ never doubles past what an int holds.
+						if (clients[c_id].level_ < MAX_LEVEL)
+							clients[c_id].exp_ += clients[pl].level_ * 50;
 						TIMER_EVENT ev{ pl, chrono::system_clock::now() + 30s, EV_RESURRECTION, 0 };
 						timer_queue.push(ev);
-						while (true) {	// 레벨업 할 경우 스텟 바꿔주기
-							if (clients[c_id].exp_ >= clients[c_id].max_exp_) {
-								clients[c_id].exp_ -= clients[c_id].max_exp_;
-								clients[c_id].max_exp_ *= 2;
-								clients[c_id].level_ += 1;
-								clients[c_id].update_status();
-							}
-							else
-								break;
+						while (clients[c_id].level_ < MAX_LEVEL && clients[c_id].exp_ >= clients[c_id].max_exp_) {	// 레벨업 할 경우 스텟 바꿔주기
+							clients[c_id].exp_ -= clients[c_id].max_exp_;
+							clients[c_id].level_ += 1;
+							clients[c_id].max_exp_ = max_exp_for(clients[c_id].level_);
+							clients[c_id].update_status();
 						}
 						clients[c_id].send_stat_change_packet(c_id, clients[c_id].max_hp_, clients[c_id].hp_, clients[c_id].level_, clients[c_id].exp_);
 						// 죽은 NPC 시야에서 삭제
@@ -474,18 +472,16 @@ void process_packet(int c_id, char* packet)
 					}
 				}
 				if (kill) {
-					clients[c_id].exp_ += clients[pl].level_ * 50;
+					// Exp stops at the cap so max_exp_ never doubles past what an int holds.
+					if (clients[c_id].level_ < MAX_LEVEL)
+						clients[c_id].exp_ += clients[pl].level_ * 50;
 					TIMER_EVENT ev{ pl, chrono::system_clock::now() + 30s, EV_RESURRECTION, 0 };
 					timer_queue.push(ev);
-					while (true) {	// 레벨업 할 경우 스텟 바꿔주기
-						if (clients[c_id].exp_ >= clients[c_id].max_exp_) {
-							clients[c_id].exp_ -= clients[c_id].max_exp_;
-							clients[c_id].max_exp_ *= 2;
-							clients[c_id].level_ += 1;
-							clients[c_id].update_status();
-						}
-						else
-							break;
+					while (clients[c_id].level_ < MAX_LEVEL && clients[c_id].exp_ >= clients[c_id].max_exp_) {	// 레벨업 할 경우 스텟 바꿔주기
+						clients[c_id].exp_ -= clients[c_id].max_exp_;
+						clients[c_id].level_ += 1;
+						clients[c_id].max_exp_ = max_exp_for(clients[c_id].level_);
+						clients[c_id].update_status();
 					}
 					clients[c_id].send_stat_change_packet(c_id, clients[c_id].max_hp_, clients[c_id].hp_, clients[c_id].level_, clients[c_id].exp_);
 
@@ -1204,7 +1200,13 @@ void connect_db() {
 										if (retcode == SQL_SUCCESS || retcode == SQL_SUCCESS_WITH_INFO) {
 											WideCharToMultiByte(CP_ACP, 0, userName, -1, clients[userId].name_,
 												sizeof(clients[userId].name_), NULL, NULL);
-											clients[userId].level_ = 100;
+											// The DB row is the source of truth for level. Clamp it because rows
+											// saved before the cap existed can hold larger values.
+											int db_level = userLevel;
+											if (db_level < 1) db_level = 1;
+											if (db_level > MAX_LEVEL) db_level = MAX_LEVEL;
+											clients[userId].level_ = db_level;
+											clients[userId].max_exp_ = max_exp_for(db_level);
 											clients[userId].exp_ = userExp;
 											clients[userId].pos_.x_ = userX;
 											clients[userId].pos_.y_ = userY;

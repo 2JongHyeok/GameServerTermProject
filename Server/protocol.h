@@ -18,6 +18,13 @@ constexpr int MAGE_STAT_ARMOR = 100;
 constexpr int PRIST_STAT_ATK = 5;
 constexpr int PRIST_STAT_ARMOR = 100;
 
+// Level cap and the exp needed to leave a level. max_exp doubles from 100, so
+// 25 is the last level whose value fits in an int (100 * 2^24); the cap keeps
+// the level-up loop from overflowing. Shared with the client, so it lives here.
+constexpr int MAX_LEVEL = 25;
+constexpr int max_exp_for(int level) { return 100 << (level - 1); }
+static_assert(max_exp_for(MAX_LEVEL) > 0, "max_exp_for(MAX_LEVEL) must fit in an int");
+
 // Packet ID
 constexpr char CS_LOGIN = 0;
 constexpr char CS_MOVE = 1;

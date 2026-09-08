@@ -349,6 +349,7 @@ void ProcessPacket(char* ptr)
 		avatar.hp_ = packet->hp;
 		avatar.level_ = packet->level;
 		avatar.exp_ = packet->exp;
+		avatar.max_exp_ = max_exp_for(packet->level);
 		g_left_x = packet->x - 10;
 		g_top_y = packet->y - 10;
 		avatar.change_texture(packet->character);
@@ -426,7 +427,7 @@ void ProcessPacket(char* ptr)
 			avatar.hp_ = my_packet->hp;
 			avatar.level_ = my_packet->level;
 			avatar.exp_ = my_packet->exp;
-			avatar.max_exp_ = pow(2,(avatar.level_-1))*100;
+			avatar.max_exp_ = max_exp_for(avatar.level_);
 		}
 		else {
 			players[other_id].hp_ = my_packet->hp;

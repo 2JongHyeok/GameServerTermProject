@@ -58,6 +58,10 @@ struct CLIENT {
 	int prev_packet_data;
 	int curr_packet_size;
 	high_resolution_clock::time_point last_move_time;
+	// Stamp of the move whose echo is still expected; 0 when none is outstanding.
+	// The server replays the stored stamp on moves it sends on its own (respawn,
+	// teleport), so only the echo matching this one is a real round trip.
+	atomic<unsigned> pending_move_time;
 };
 
 array<int, MAX_CLIENTS> client_map;
@@ -75,6 +79,7 @@ int			hold_seconds;				// how long the target load is held and measured
 constexpr int RTT_BUCKETS = 1001;
 atomic<unsigned> rtt_hist[RTT_BUCKETS + 1];
 atomic_bool measuring;						// samples count only while the hold phase runs
+atomic<unsigned> lost_echoes;				// moves whose echo never arrived before the next move
 
 vector <thread*> worker_threads;
 thread test_thread;
@@ -148,7 +153,14 @@ void ProcessPacket(int ci, unsigned char packet[])
 				g_clients[my_id].y = move_packet->y;
 			}
 			if (ci == my_id) {
-				if (0 != move_packet->move_time && measuring) {
+				// Claim the outstanding stamp: this is a round trip only if the echo
+				// carries the stamp this client is still waiting for. Clearing it to 0
+				// also makes a stamp replayed later count at most once. Done regardless
+				// of the phase so a stamp from the ramp-up cannot leak into the hold.
+				unsigned stamp = move_packet->move_time;
+				bool is_my_echo = (0 != stamp) &&
+					g_clients[ci].pending_move_time.compare_exchange_strong(stamp, 0);
+				if (is_my_echo && measuring) {
 					// Both timestamps are truncated to 32 bits, so the unsigned
 					// subtraction stays correct even across a wraparound.
 					unsigned now_ms = static_cast<unsigned>(duration_cast<milliseconds>(high_resolution_clock::now().time_since_epoch()).count());
@@ -403,7 +415,8 @@ void Test_Thread()
 					<< " p95=" << BucketLabel(Percentile(hist, total, 0.95))
 					<< " p99=" << BucketLabel(Percentile(hist, total, 0.99))
 					<< " max=" << BucketLabel(max_bucket)
-					<< " over1000=" << hist[RTT_BUCKETS] << endl;
+					<< " over1000=" << hist[RTT_BUCKETS]
+					<< " lost=" << lost_echoes << endl;
 				exit(0);
 			}
 		}
@@ -421,7 +434,12 @@ void Test_Thread()
 			case 2: my_packet.direction = 2; break;
 			case 3: my_packet.direction = 3; break;
 			}
-			my_packet.move_time = static_cast<unsigned>(duration_cast<milliseconds>(high_resolution_clock::now().time_since_epoch()).count());
+			unsigned stamp = static_cast<unsigned>(duration_cast<milliseconds>(high_resolution_clock::now().time_since_epoch()).count());
+			my_packet.move_time = stamp;
+			// A stamp still outstanding means the previous echo never came back. Count it
+			// so a dropped sample shows up instead of quietly shortening the tail.
+			if (0 != g_clients[i].pending_move_time.exchange(stamp) && measuring)
+				lost_echoes.fetch_add(1);
 			SendPacket(i, &my_packet);
 		}
 	}
