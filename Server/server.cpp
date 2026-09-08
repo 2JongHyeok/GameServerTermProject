@@ -1019,7 +1019,9 @@ void worker_thread(HANDLE h_iocp)
 		}
 		case OP_NPC_RESURRECTION: {
 			clients[client_id].in_use_ = true;
-			clients[client_id].level_*= 2;
+			// One level per resurrection. Doubling made the level, its hp and damage,
+			// and the exp it grants grow exponentially until they overflowed an int.
+			clients[client_id].level_ += 1;
 			clients[client_id].hp_ = clients[client_id].level_*50;
 			clients[client_id].damage_ = clients[client_id].level_*2;
 
