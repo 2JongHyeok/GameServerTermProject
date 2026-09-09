@@ -1,2 +1,11 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Lua 5.4.9 upstream sources. Vendored so they stay out of the language
+# statistics and are collapsed in diffs.
+Server/lua/** linguist-vendored
+Server/include/lua.h linguist-vendored
+Server/include/luaconf.h linguist-vendored
+Server/include/lauxlib.h linguist-vendored
+Server/include/lualib.h linguist-vendored
+Server/include/lua.hpp linguist-vendored

@@ -15,6 +15,7 @@
 #include "protocol.h"
 #include "Grid.h"
 #include "SESSION.h"
+#include "NpcScript.h"
 
 using namespace std;
 constexpr int map_count = 24;
@@ -386,7 +387,7 @@ void process_packet(int c_id, char* packet)
 					if (kill) {	// 몬스터를 죽였을경우 처리
 						// Exp stops at the cap so max_exp_ never doubles past what an int holds.
 						if (clients[c_id].level_ < MAX_LEVEL)
-							clients[c_id].exp_ += clients[pl].level_ * 50;
+							clients[c_id].exp_ += npc_stats(clients[pl].level_).kill_exp;
 						TIMER_EVENT ev{ pl, chrono::system_clock::now() + 30s, EV_RESURRECTION, 0 };
 						timer_queue.push(ev);
 						while (clients[c_id].level_ < MAX_LEVEL && clients[c_id].exp_ >= clients[c_id].max_exp_) {	// 레벨업 할 경우 스텟 바꿔주기
@@ -474,7 +475,7 @@ void process_packet(int c_id, char* packet)
 				if (kill) {
 					// Exp stops at the cap so max_exp_ never doubles past what an int holds.
 					if (clients[c_id].level_ < MAX_LEVEL)
-						clients[c_id].exp_ += clients[pl].level_ * 50;
+						clients[c_id].exp_ += npc_stats(clients[pl].level_).kill_exp;
 					TIMER_EVENT ev{ pl, chrono::system_clock::now() + 30s, EV_RESURRECTION, 0 };
 					timer_queue.push(ev);
 					while (clients[c_id].level_ < MAX_LEVEL && clients[c_id].exp_ >= clients[c_id].max_exp_) {	// 레벨업 할 경우 스텟 바꿔주기
@@ -599,8 +600,7 @@ void InitializeNPC()
 			sprintf_s(clients[i].name_, "BOSS");
 			int level = rand() % 40 + 100;
 			clients[i].level_ = level;
-			clients[i].damage_ = level * 2;
-			clients[i].hp_ = level * 50;
+			clients[i].hp_ = npc_stats(level).max_hp;
 		}
 		else {
 			sprintf_s(clients[i].name_, "NPC%d", i);
@@ -617,8 +617,7 @@ void InitializeNPC()
 				sprintf_s(clients[i].name_, "Cat%d", i);
 			}
 			clients[i].level_ = level;
-			clients[i].damage_ = level * 2;
-			clients[i].hp_ = level * 50;
+			clients[i].hp_ = npc_stats(level).max_hp;
 		}
 	}
 }
@@ -722,33 +721,14 @@ void do_npc_random_move(int npc_id)
 		}
 	}
 	if (min_distance <= 3) {
+		const NPC_STATS& stats = npc_stats(clients[npc_id].level_);
 		clients[nearest].hp_l_.lock();
-		int damage = clients[npc_id].damage_ - clients[nearest].armor_;
+		int damage = stats.damage - clients[nearest].armor_;
 		if (damage < 0) damage = 0;
-		if (clients[npc_id].level_ <= 10) {
-			if (min_distance <= 3) {
-				clients[nearest].hp_ -= damage;
-			}
-		}
-		else if (clients[npc_id].level_ <= 20) {
-			if (min_distance <= 2) {
-				clients[nearest].hp_ -= damage;
-			}
-		}
-		else if (clients[npc_id].level_ <= 30) {
-			if (min_distance <= 1) {
-				clients[nearest].hp_ -= damage;
-			}
-		}
-		else if (clients[npc_id].level_ <= 40) {
-			if (min_distance <= 1) {
-				clients[nearest].hp_ -= damage;
-			}
-		}
-		else {
-			if (min_distance <= 1) {
-				clients[nearest].hp_ -= damage;
-			}
+		// Being out of reach only stops the hp change. The damage packet below
+		// still goes out, as it did before.
+		if (min_distance <= stats.attack_range) {
+			clients[nearest].hp_ -= damage;
 		}
 		if (clients[nearest].hp_ > 0) {
 			clients[nearest].hp_l_.unlock();
@@ -812,40 +792,25 @@ void do_npc_random_move(int npc_id)
 		}
 		return;
 	}
-	if (clients[npc_id].level_ <= 10) return;
+	int dx, dy;
+	// The script decides where this NPC steps. 0, 0 - which a script failure
+	// also yields - keeps it in place, and is where the rule that low level
+	// NPCs do not roam now lives.
+	if (false == npc_decide_move(clients[npc_id].level_, &dx, &dy)) return;
+	if (0 == dx && 0 == dy) return;
 
 	int x = clients[npc_id].pos_.x_;
 	int y = clients[npc_id].pos_.y_;
-	
-	switch (rand() % 4) {
-	case 0: {
-		if (y <= 0) break;
-		if (my_map[y - 1][x] != 50) break;
-		y--;
-		break;
+	int nx = x + dx;
+	int ny = y + dy;
+	if (nx >= 0 && nx < W_WIDTH && ny >= 0 && ny < W_HEIGHT && my_map[ny][nx] == 50) {
+		x = nx;
+		y = ny;
 	}
-	case 1: {
-		if (y >= W_HEIGHT - 1) break;
-		if (my_map[y + 1][x] != 50) break;
-		y++;
-		break;
-	}
-	case 2: {
-		if (x <= 0) break;
-		if (my_map[y][x - 1] != 50) break;
-		x--;
-		break;
-	}
-	case 3: {
-		if (x >= W_WIDTH - 1) break;
-		if (my_map[y][x + 1] != 50) break;
-		x++;
-		break;
-	}
-	}
-		Sector.updateObject(clients[npc_id].pos_, x, y);
-		clients[npc_id].pos_.x_.store(x);
-		clients[npc_id].pos_.y_.store(y);
+
+	Sector.updateObject(clients[npc_id].pos_, x, y);
+	clients[npc_id].pos_.x_.store(x);
+	clients[npc_id].pos_.y_.store(y);
 
 	 Sector.getNearbyObjects(vl, clients[npc_id].pos_);
 	unordered_set<int> new_vl;
@@ -1019,11 +984,9 @@ void worker_thread(HANDLE h_iocp)
 		}
 		case OP_NPC_RESURRECTION: {
 			clients[client_id].in_use_ = true;
-			// One level per resurrection. Doubling made the level, its hp and damage,
-			// and the exp it grants grow exponentially until they overflowed an int.
-			clients[client_id].level_ += 1;
-			clients[client_id].hp_ = clients[client_id].level_*50;
-			clients[client_id].damage_ = clients[client_id].level_*2;
+			// The level stays as it is. Raising it on every resurrection made an
+			// NPC's stats and the exp it grants climb without bound.
+			clients[client_id].hp_ = npc_stats(clients[client_id].level_).max_hp;
 
 			unordered_set<int> vl;
 			Sector.getNearbyObjects(vl, clients[client_id].pos_);
@@ -1273,6 +1236,10 @@ int main()
 	printf("맵 정보 준비중\n");
 	Load_Map_info();
 	printf("맵 정보 준비완료\n");
+
+	printf("NPC 스크립트 준비중\n");
+	if (false == load_npc_stats()) return 1;
+	printf("NPC 스크립트 준비완료\n");
 
 	printf("몬스터 정보 준비중\n");
 	InitializeNPC();
